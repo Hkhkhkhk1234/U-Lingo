@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "646008106934",
+    "project_id": "ulingo4",
+    "storage_bucket": "ulingo4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:646008106934:android:47bdc8fd5a9e2c442ddb17",
+        "android_client_info": {
+          "package_name": "com.example.ulingo_v4"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAcJxSN4i4YOnwto3H_-gqQDI392LbEzWQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
