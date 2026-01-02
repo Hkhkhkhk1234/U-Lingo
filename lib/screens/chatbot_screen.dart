@@ -10,7 +10,7 @@ class ChatbotScreen extends StatefulWidget {
 }
 
 class _ChatbotScreenState extends State<ChatbotScreen> {
-  static const String OPENROUTER_API_KEY = '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';     //'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
+  static const String OPENROUTER_API_KEY = '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';     //Change the API Key Provided in ZIP File
 
   final TextEditingController _messageController = TextEditingController();
   final List<ChatMessage> _messages = [];
