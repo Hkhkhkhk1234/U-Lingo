@@ -2,6 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:ulingo/services/audio_player_service.dart';
 import 'package:ulingo/services/elevenlabs_service.dart';
 
+/// A screen that displays a searchable list of vocabulary words for language learning.
+/// 
+/// This screen provides:
+/// - A searchable vocabulary list with Chinese words, pinyin, and example sentences
+/// - Text-to-speech audio playback for pronunciation practice
+/// - Expandable cards to show detailed information for each word
+/// 
+/// The [levelId] parameter determines which vocabulary set to display, with 0 indicating
+/// the main vocabulary screen accessible from the bottom navigation.
 class VocabularyScreen extends StatefulWidget {
   final int levelId;
 
@@ -12,16 +21,34 @@ class VocabularyScreen extends StatefulWidget {
 }
 
 class _VocabularyScreenState extends State<VocabularyScreen> {
+  // Controller for the search input field
   final TextEditingController _searchController = TextEditingController();
+  
+  // Current search query entered by the user
   String _searchQuery = '';
+  
+  // Set of English words that are currently expanded to show details
+  // Using a Set for O(1) lookup performance when checking expansion state
   final Set<String> _expandedWords = {};
 
   @override
   void dispose() {
+    // Clean up the controller to prevent memory leaks
     _searchController.dispose();
     super.dispose();
   }
 
+  /// Static vocabulary data containing 50 common Chinese words.
+  /// 
+  /// Each entry includes:
+  /// - english: The English translation
+  /// - mandarin: Chinese characters
+  /// - pinyin: Romanized pronunciation guide
+  /// - sentence: Example sentence in Chinese
+  /// - sentencePinyin: Pinyin for the example sentence
+  /// - sentenceTranslation: English translation of the example
+  /// 
+  /// TODO: Consider moving this to a separate data file or database for better maintainability
   final List<Map<String, String>> _vocabularyList = [
     {'english': 'Afternoon', 'mandarin': '下午', 'pinyin': 'xià wǔ', 'sentence': '下午我要去学校', 'sentencePinyin': 'xià wǔ wǒ yào qù xué xiào', 'sentenceTranslation': 'I will go to school in the afternoon'},
     {'english': 'Again', 'mandarin': '再', 'pinyin': 'zài', 'sentence': '请再说一次', 'sentencePinyin': 'qǐng zài shuō yī cì', 'sentenceTranslation': 'Please say it again'},
@@ -47,9 +74,9 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
     {'english': 'Food', 'mandarin': '食物', 'pinyin': 'shí wù', 'sentence': '这个食物很好吃', 'sentencePinyin': 'zhè gè shí wù hěn hǎo chī', 'sentenceTranslation': 'This food is delicious'},
     {'english': 'Friend', 'mandarin': '朋友', 'pinyin': 'péng you', 'sentence': '他是我的好朋友', 'sentencePinyin': 'tā shì wǒ de hǎo péng you', 'sentenceTranslation': 'He is my good friend'},
     {'english': 'Good', 'mandarin': '好', 'pinyin': 'hǎo', 'sentence': '这个很好', 'sentencePinyin': 'zhè gè hěn hǎo', 'sentenceTranslation': 'This is very good'},
-    {'english': 'Goodbye', 'mandarin': '再见', 'pinyin': 'zài jiàn', 'sentence': '明天见，再见', 'sentencePinyin': 'míng tiān jiàn, zài jiàn', 'sentenceTranslation': 'See you tomorrow, goodbye'},
+    {'english': 'Goodbye', 'mandarin': '再见', 'pinyin': 'zài jiàn', 'sentence': '明天见,再见', 'sentencePinyin': 'míng tiān jiàn, zài jiàn', 'sentenceTranslation': 'See you tomorrow, goodbye'},
     {'english': 'Happy', 'mandarin': '快乐', 'pinyin': 'kuài lè', 'sentence': '祝你生日快乐', 'sentencePinyin': 'zhù nǐ shēng rì kuài lè', 'sentenceTranslation': 'Happy birthday to you'},
-    {'english': 'Hello', 'mandarin': '你好', 'pinyin': 'nǐ hǎo', 'sentence': '你好，很高兴见到你', 'sentencePinyin': 'nǐ hǎo, hěn gāo xìng jiàn dào nǐ', 'sentenceTranslation': 'Hello, nice to meet you'},
+    {'english': 'Hello', 'mandarin': '你好', 'pinyin': 'nǐ hǎo', 'sentence': '你好,很高兴见到你', 'sentencePinyin': 'nǐ hǎo, hěn gāo xìng jiàn dào nǐ', 'sentenceTranslation': 'Hello, nice to meet you'},
     {'english': 'Home', 'mandarin': '家', 'pinyin': 'jiā', 'sentence': '我要回家', 'sentencePinyin': 'wǒ yào huí jiā', 'sentenceTranslation': 'I want to go home'},
     {'english': 'Hot', 'mandarin': '热', 'pinyin': 'rè', 'sentence': '今天很热', 'sentencePinyin': 'jīn tiān hěn rè', 'sentenceTranslation': 'Today is very hot'},
     {'english': 'House', 'mandarin': '房子', 'pinyin': 'fáng zi', 'sentence': '这是我的房子', 'sentencePinyin': 'zhè shì wǒ de fáng zi', 'sentenceTranslation': 'This is my house'},
@@ -75,6 +102,10 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
     {'english': 'Year', 'mandarin': '年', 'pinyin': 'nián', 'sentence': '今年是2024年', 'sentencePinyin': 'jīn nián shì èr líng èr sì nián', 'sentenceTranslation': 'This year is 2024'},
   ];
 
+  /// Filters the vocabulary list based on the current search query.
+  /// 
+  /// Performs case-insensitive matching against English words only.
+  /// Returns the full list when search query is empty.
   List<Map<String, String>> _getFilteredVocabulary() {
     if (_searchQuery.isEmpty) {
       return _vocabularyList;
@@ -90,7 +121,7 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
     final filteredVocabulary = _getFilteredVocabulary();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFFF9F0),
+      backgroundColor: const Color(0xFFFFF9F0), // Warm cream background
       appBar: AppBar(
         backgroundColor: const Color(0xFFFFF9F0),
         elevation: 0,
@@ -103,10 +134,11 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFFE47B5F),
+                color: Color(0xFFE47B5F), // Coral accent color
               ),
             ),
             const SizedBox(width: 12),
+            // Apple icon as a playful branding element
             Image.asset(
               'assets/images/apple.png',
               width: 48,
@@ -114,11 +146,12 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
             ),
           ],
         ),
+        // Show back button only when accessed from a specific level (not main nav)
         automaticallyImplyLeading: widget.levelId != 0,
       ),
       body: Column(
         children: [
-          // Search bar
+          // Search input section
           Container(
             padding: const EdgeInsets.all(16),
             child: TextField(
@@ -127,6 +160,7 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
                 hintText: 'Search Words or Phrase',
                 hintStyle: TextStyle(color: Colors.grey[600]),
                 prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                // Show clear button only when there's text in the search field
                 suffixIcon: _searchQuery.isNotEmpty
                     ? IconButton(
                   icon: const Icon(Icons.clear, color: Colors.grey),
@@ -138,6 +172,7 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
                   },
                 )
                     : null,
+                // Rounded border design for a friendly, modern look
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(30),
                   borderSide: const BorderSide(color: Colors.black, width: 2),
@@ -151,7 +186,7 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
                   borderSide: const BorderSide(color: Colors.black, width: 2),
                 ),
                 filled: true,
-                fillColor: const Color(0xFFFFF9E6),
+                fillColor: const Color(0xFFFFF9E6), // Light yellow fill
               ),
               onChanged: (value) {
                 setState(() {
@@ -161,10 +196,11 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
             ),
           ),
 
-          // Vocabulary list
+          // Vocabulary list or empty state
           Expanded(
             child: filteredVocabulary.isEmpty
                 ? Center(
+              // Empty state when no search results found
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -205,6 +241,7 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
                   sentenceTranslation: item['sentenceTranslation']!,
                   isExpanded: isExpanded,
                   onTap: () {
+                    // Toggle expansion state when card is tapped
                     setState(() {
                       if (isExpanded) {
                         _expandedWords.remove(item['english']);
@@ -223,6 +260,10 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
   }
 }
 
+/// Individual vocabulary card widget that displays word details and handles audio playback.
+/// 
+/// Can be collapsed (showing only English) or expanded (showing Chinese translation,
+/// pinyin, and example sentence with audio controls for both word and sentence).
 class _VocabularyItem extends StatefulWidget {
   final String english;
   final String mandarin;
@@ -250,20 +291,30 @@ class _VocabularyItem extends StatefulWidget {
 }
 
 class _VocabularyItemState extends State<_VocabularyItem> {
+  // Loading states to prevent multiple simultaneous audio requests
+  // and provide visual feedback during audio generation
   bool _isLoadingAudio = false;
   bool _isLoadingSentenceAudio = false;
 
+  /// Generates and plays audio pronunciation for the vocabulary word.
+  /// 
+  /// Uses ElevenLabs text-to-speech service for natural-sounding Chinese pronunciation.
+  /// Prevents concurrent requests and shows error feedback if generation fails.
   Future<void> _playAudio() async {
+    // Prevent multiple simultaneous audio generation requests
     if (_isLoadingAudio) return;
 
     setState(() => _isLoadingAudio = true);
 
     try {
+      // Request audio generation from ElevenLabs service
       final audioBytes = await ElevenLabsService.textToSpeech(widget.mandarin);
 
       if (audioBytes != null) {
+        // Play the generated audio through the audio player service
         await AudioPlayerService.playAudio(audioBytes);
       } else {
+        // Show user-friendly error message if audio generation failed
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -274,6 +325,7 @@ class _VocabularyItemState extends State<_VocabularyItem> {
         }
       }
     } catch (e) {
+      // Log error for debugging and inform user of failure
       print('Error playing audio: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -284,12 +336,17 @@ class _VocabularyItemState extends State<_VocabularyItem> {
         );
       }
     } finally {
+      // Reset loading state, checking if widget is still mounted
       if (mounted) {
         setState(() => _isLoadingAudio = false);
       }
     }
   }
 
+  /// Generates and plays audio pronunciation for the example sentence.
+  /// 
+  /// Similar to _playAudio() but for the complete example sentence,
+  /// providing context for how the word is used in conversation.
   Future<void> _playSentenceAudio() async {
     if (_isLoadingSentenceAudio) return;
 
@@ -334,7 +391,7 @@ class _VocabularyItemState extends State<_VocabularyItem> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.black, width: 2),
+        border: Border.all(color: Colors.black, width: 2), // Bold outline for card-based design
       ),
       child: InkWell(
         onTap: widget.onTap,
@@ -344,6 +401,7 @@ class _VocabularyItemState extends State<_VocabularyItem> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Collapsed header - always visible
               Row(
                 children: [
                   Expanded(
@@ -356,6 +414,7 @@ class _VocabularyItemState extends State<_VocabularyItem> {
                       ),
                     ),
                   ),
+                  // Audio button in collapsed state for quick access
                   Container(
                     decoration: const BoxDecoration(
                       color: Color(0xFFFFF4E6),
@@ -370,6 +429,7 @@ class _VocabularyItemState extends State<_VocabularyItem> {
                     ),
                   ),
                   const SizedBox(width: 8),
+                  // Expansion indicator icon
                   Icon(
                     widget.isExpanded
                         ? Icons.keyboard_arrow_up
@@ -378,8 +438,10 @@ class _VocabularyItemState extends State<_VocabularyItem> {
                   ),
                 ],
               ),
+              // Expanded content - shown only when card is expanded
               if (widget.isExpanded) ...[
                 const SizedBox(height: 16),
+                
                 // Mandarin Translation Section
                 Container(
                   padding: const EdgeInsets.all(16),
@@ -406,6 +468,7 @@ class _VocabularyItemState extends State<_VocabularyItem> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                // Chinese characters - prominent display
                                 Text(
                                   widget.mandarin,
                                   style: const TextStyle(
@@ -415,6 +478,7 @@ class _VocabularyItemState extends State<_VocabularyItem> {
                                   ),
                                 ),
                                 const SizedBox(height: 4),
+                                // Pinyin - romanization for pronunciation guidance
                                 Text(
                                   widget.pinyin,
                                   style: TextStyle(
@@ -426,6 +490,7 @@ class _VocabularyItemState extends State<_VocabularyItem> {
                               ],
                             ),
                           ),
+                          // Audio playback button with loading indicator
                           Container(
                             decoration: const BoxDecoration(
                               color: Colors.white,
@@ -458,7 +523,9 @@ class _VocabularyItemState extends State<_VocabularyItem> {
                   ),
                 ),
                 const SizedBox(height: 16),
+                
                 // Example Sentence Section
+                // Provides contextual usage of the vocabulary word in a complete sentence
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -484,6 +551,7 @@ class _VocabularyItemState extends State<_VocabularyItem> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                // Chinese sentence
                                 Text(
                                   widget.sentence,
                                   style: const TextStyle(
@@ -493,6 +561,7 @@ class _VocabularyItemState extends State<_VocabularyItem> {
                                   ),
                                 ),
                                 const SizedBox(height: 4),
+                                // Sentence pinyin for pronunciation
                                 Text(
                                   widget.sentencePinyin,
                                   style: TextStyle(
@@ -502,6 +571,7 @@ class _VocabularyItemState extends State<_VocabularyItem> {
                                   ),
                                 ),
                                 const SizedBox(height: 8),
+                                // English translation of the sentence
                                 Text(
                                   widget.sentenceTranslation,
                                   style: TextStyle(
@@ -513,6 +583,7 @@ class _VocabularyItemState extends State<_VocabularyItem> {
                             ),
                           ),
                           const SizedBox(width: 8),
+                          // Sentence audio playback button with loading state
                           Container(
                             decoration: const BoxDecoration(
                               color: Colors.white,
