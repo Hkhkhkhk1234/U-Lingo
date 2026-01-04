@@ -2,11 +2,29 @@ import 'package:flutter/material.dart';
 import 'package:ulingo/services/audio_player_service.dart';
 import 'package:ulingo/services/elevenlabs_service.dart';
 
+/// Interactive pronunciation practice screen for language learning.
+/// 
+/// Implements listen-and-repeat methodology:
+/// 1. User views word with phonetic guide (pinyin) and translation
+/// 2. User listens to model pronunciation (TTS audio)
+/// 3. User records their own pronunciation attempt
+/// 4. System provides simulated scoring feedback
+/// 
+/// Current limitations (MVP implementation):
+/// - Recording is simulated (no actual audio capture yet)
+/// - Scoring is randomized (no speech recognition analysis)
+/// - Feedback is generated based on score ranges, not actual pronunciation quality
+/// 
+/// Design choice: Simulated scoring allows testing UX flow and engagement
+/// patterns before implementing expensive speech recognition API integration.
+/// 
+/// Future enhancement: Replace simulated recording with actual speech-to-text
+/// comparison for accurate pronunciation assessment.
 class PronunciationPracticeScreen extends StatefulWidget {
   final String levelDocId;
   final int levelId;
   final String levelTitle;
-  final List<Map<String, dynamic>> pronunciations;
+  final List<Map<String, dynamic>> pronunciations; // Pre-loaded from parent to avoid re-fetching
 
   const PronunciationPracticeScreen({
     Key? key,
@@ -23,33 +41,56 @@ class PronunciationPracticeScreen extends StatefulWidget {
 
 class _PronunciationPracticeScreenState
     extends State<PronunciationPracticeScreen> {
-  int _currentWordIndex = 0;
-  bool _isRecording = false;
-  bool _hasRecorded = false;
-  bool _showFeedback = false;
-  double _pronunciationScore = 0.0;
-  String _feedbackText = '';
-  bool _isPlayingModel = false;
-  bool _isLoadingAudio = false;
+  int _currentWordIndex = 0; // Tracks which word user is practicing
+  bool _isRecording = false; // True during 2-second recording simulation
+  bool _hasRecorded = false; // Tracks if user has attempted current word
+  bool _showFeedback = false; // Controls feedback card visibility
+  double _pronunciationScore = 0.0; // Simulated accuracy score (60-100%)
+  String _feedbackText = ''; // Contextual message based on score
+  bool _isPlayingModel = false; // True during model audio playback
+  bool _isLoadingAudio = false; // True while generating TTS audio
 
-  // U-lingo color theme
-  final Color primaryBeige = const Color(0xFFFAF6F0); //0xFFE17C7C
-  final Color accentCoral = const Color(0xFFE8B4A0); //0xFFE17C7C
-  final Color accentGreen = const Color(0xFF8FAD88);  //0xFF9DC88D
+  // Brand color palette centralized for consistency
+  // These match the visual identity across all U-Lingo screens
+  final Color primaryBeige = const Color(0xFFFAF6F0);
+  final Color accentCoral = const Color(0xFFE8B4A0);
+  final Color accentGreen = const Color(0xFF8FAD88);
   final Color textDark = const Color(0xFF2C2C2C);
   final Color buttonBeige = const Color(0xFFE8D5B5);
 
+  /// Returns currently displayed word data.
+  /// 
+  /// Expected structure from Firestore:
+  /// {
+  ///   'word': '你好',           // Target language word
+  ///   'pinyin': 'nǐ hǎo',      // Pronunciation guide
+  ///   'translation': 'hello',   // English meaning
+  ///   'tips': 'Rising tone...' // Pronunciation guidance
+  /// }
   Map<String, dynamic> get _currentWord {
     if (widget.pronunciations.isEmpty) return {};
     return widget.pronunciations[_currentWordIndex];
   }
 
+  /// Initiates simulated recording with visual/state feedback.
+  /// 
+  /// MVP implementation: No actual audio capture occurs.
+  /// 2-second timer mimics recording duration to establish UX flow.
+  /// 
+  /// This simulation approach allows:
+  /// - Testing engagement without speech recognition API costs
+  /// - Validating UI/UX patterns before technical implementation
+  /// - Gathering user feedback on practice methodology
+  /// 
+  /// Future: Replace with actual microphone access and audio capture.
   void _startRecording() {
     setState(() {
       _isRecording = true;
-      _showFeedback = false;
+      _showFeedback = false; // Hide previous attempt's feedback
     });
 
+    // Simulate 2-second recording duration
+    // Provides realistic timing for pronunciation attempt
     Future.delayed(const Duration(seconds: 2), () {
       if (mounted) {
         _stopRecording();
@@ -57,19 +98,38 @@ class _PronunciationPracticeScreenState
     });
   }
 
+  /// Ends recording simulation and triggers analysis.
   void _stopRecording() {
     setState(() {
       _isRecording = false;
-      _hasRecorded = true;
+      _hasRecorded = true; // Enables "record again" messaging
     });
     _analyzePronunciation();
   }
 
+  /// Generates simulated pronunciation accuracy score and feedback.
+  /// 
+  /// Current implementation: Randomized score (60-100%) for UX testing.
+  /// Score ranges map to feedback messages:
+  /// - 90-100%: Excellent - reinforces success
+  /// - 75-89%: Good - encourages with specific guidance
+  /// - 60-74%: Keep practicing - constructive redirection
+  /// - <60%: Try again - gentle prompt to retry
+  /// 
+  /// Randomization uses current millisecond to create variability
+  /// without requiring external randomness library.
+  /// 
+  /// Future enhancement: Replace with actual speech recognition API
+  /// comparing user audio to reference pronunciation for real accuracy.
   void _analyzePronunciation() {
     Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) {
+        // Generate score between 60-100%
+        // Formula: 60 + (40 * random_factor) where random_factor is 0.5-1.0
         final score = 60 + (40 * (0.5 + (DateTime.now().millisecond % 500) / 1000));
 
+        // Feedback messages calibrated for encouragement over criticism
+        // Language learning requires positive reinforcement to maintain motivation
         String feedback;
         if (score >= 90) {
           feedback = 'Excellent! Your pronunciation is very accurate!';
@@ -90,7 +150,21 @@ class _PronunciationPracticeScreenState
     });
   }
 
+  /// Plays TTS audio of current word for user to model.
+  /// 
+  /// Provides both normal and slow speed options:
+  /// - Normal speed: Natural speaking pace for comprehension
+  /// - Slow speed: Exaggerated pronunciation for detailed learning
+  /// 
+  /// Note: Current implementation doesn't actually vary speed (future enhancement).
+  /// Both options play same audio but provide different UI feedback.
+  /// 
+  /// Error handling covers:
+  /// - Network failures during TTS generation
+  /// - Invalid audio bytes from API
+  /// - Device audio playback issues
   Future<void> _playModelPronunciation({bool slow = false}) async {
+    // Prevent overlapping audio requests
     if (_isLoadingAudio || _isPlayingModel) return;
 
     setState(() {
@@ -100,11 +174,16 @@ class _PronunciationPracticeScreenState
 
     try {
       final word = _currentWord['word'] as String;
+      
+      // Network request to ElevenLabs TTS API
+      // Generates audio from text for model pronunciation
       final audioBytes = await ElevenLabsService.textToSpeech(word);
 
       if (audioBytes != null) {
         await AudioPlayerService.playAudio(audioBytes);
 
+        // Visual feedback confirms audio is playing
+        // Helps users understand system is responding
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -123,6 +202,7 @@ class _PronunciationPracticeScreenState
           );
         }
       } else {
+        // API returned null - service error or rate limiting
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -162,6 +242,11 @@ class _PronunciationPracticeScreenState
     }
   }
 
+  /// Advances to next pronunciation word or shows completion.
+  /// 
+  /// Resets attempt-specific state (recording, feedback) but preserves
+  /// navigation position. This allows users to review previous words
+  /// without losing their progress through the exercise set.
   void _nextWord() {
     if (_currentWordIndex < widget.pronunciations.length - 1) {
       setState(() {
@@ -171,10 +256,15 @@ class _PronunciationPracticeScreenState
         _pronunciationScore = 0.0;
       });
     } else {
+      // Reached end of pronunciation list
       _showCompletionDialog();
     }
   }
 
+  /// Returns to previous word for additional practice.
+  /// 
+  /// Allows non-linear navigation so users can focus on difficult words
+  /// without being forced through entire sequence again.
   void _previousWord() {
     if (_currentWordIndex > 0) {
       setState(() {
@@ -186,6 +276,14 @@ class _PronunciationPracticeScreenState
     }
   }
 
+  /// Shows completion dialog with restart or exit options.
+  /// 
+  /// Two-button design provides clear paths:
+  /// - "Finish": Returns to level detail screen
+  /// - "Practice Again": Restarts from first word for additional repetition
+  /// 
+  /// Repetition option supports spaced practice methodology -
+  /// multiple passes through material improve retention.
   void _showCompletionDialog() {
     showDialog(
       context: context,
@@ -211,19 +309,21 @@ class _PronunciationPracticeScreenState
           ),
         ),
         actions: [
+          // Exit option - returns to previous screen
           TextButton(
             onPressed: () {
-              Navigator.pop(context);
-              Navigator.pop(context);
+              Navigator.pop(context); // Close dialog
+              Navigator.pop(context); // Exit pronunciation screen
             },
             style: TextButton.styleFrom(
               foregroundColor: textDark,
             ),
             child: const Text('Finish'),
           ),
+          // Restart option - resets to beginning for additional practice
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(context);
+              Navigator.pop(context); // Close dialog
               setState(() {
                 _currentWordIndex = 0;
                 _hasRecorded = false;
@@ -247,6 +347,8 @@ class _PronunciationPracticeScreenState
 
   @override
   Widget build(BuildContext context) {
+    // Empty state: No pronunciation exercises available
+    // Occurs if admin hasn't added pronunciation data to this level
     if (widget.pronunciations.isEmpty) {
       return Scaffold(
         backgroundColor: primaryBeige,
@@ -286,6 +388,8 @@ class _PronunciationPracticeScreenState
         ),
         iconTheme: IconThemeData(color: textDark),
         actions: [
+          // Progress indicator shows position in word list
+          // Helps users gauge time commitment remaining
           Center(
             child: Container(
               margin: const EdgeInsets.only(right: 16),
@@ -309,6 +413,8 @@ class _PronunciationPracticeScreenState
       ),
       body: Column(
         children: [
+          // Linear progress bar provides visual completion indicator
+          // Complements numeric counter in app bar
           Container(
             height: 8,
             margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -331,7 +437,8 @@ class _PronunciationPracticeScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Word Display Card
+                  // Word Display Card - Primary focus element
+                  // Large text ensures visibility and emphasizes importance
                   Container(
                     padding: const EdgeInsets.all(32),
                     decoration: BoxDecoration(
@@ -341,6 +448,7 @@ class _PronunciationPracticeScreenState
                     ),
                     child: Column(
                       children: [
+                        // Target language word in large font
                         Text(
                           _currentWord['word'] ?? '',
                           style: TextStyle(
@@ -350,6 +458,7 @@ class _PronunciationPracticeScreenState
                           ),
                         ),
                         const SizedBox(height: 16),
+                        // Pinyin provides pronunciation guide for tonal languages
                         Text(
                           _currentWord['pinyin'] ?? '',
                           style: TextStyle(
@@ -360,6 +469,7 @@ class _PronunciationPracticeScreenState
                           ),
                         ),
                         const SizedBox(height: 12),
+                        // Translation provides meaning context
                         Text(
                           _currentWord['translation'] ?? '',
                           style: TextStyle(
@@ -372,13 +482,15 @@ class _PronunciationPracticeScreenState
                   ),
                   const SizedBox(height: 20),
 
-                  // Tips Container
+                  // Tips Container - Pronunciation guidance
+                  // Yellow background creates distinct visual separation
+                  // from main content while maintaining friendly aesthetic
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFFF9E6), //0xFFFFF9E6 //
+                      color: const Color(0xFFFFF9E6),
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: const Color(0xFFFFCC80), width: 2), //0xFFFF0966
+                      border: Border.all(color: const Color(0xFFFFCC80), width: 2),
                     ),
                     child: Row(
                       children: [
@@ -398,7 +510,7 @@ class _PronunciationPracticeScreenState
                   ),
                   const SizedBox(height: 32),
 
-                  // Listen Section
+                  // Listen Section - Model audio playback
                   Text(
                     'Listen to Model Pronunciation',
                     style: TextStyle(
@@ -408,6 +520,9 @@ class _PronunciationPracticeScreenState
                     ),
                   ),
                   const SizedBox(height: 12),
+                  // Dual speed buttons support different learning needs
+                  // Normal speed: Natural comprehension and fluency
+                  // Slow speed: Detailed phoneme analysis (future feature)
                   Row(
                     children: [
                       Expanded(
@@ -447,7 +562,7 @@ class _PronunciationPracticeScreenState
                   ),
                   const SizedBox(height: 32),
 
-                  // Record Section
+                  // Record Section - User pronunciation capture
                   Text(
                     'Record Your Pronunciation',
                     style: TextStyle(
@@ -457,6 +572,9 @@ class _PronunciationPracticeScreenState
                     ),
                   ),
                   const SizedBox(height: 20),
+                  
+                  // Large circular record button with pulsing animation
+                  // Color changes and size animation provide clear recording feedback
                   Center(
                     child: GestureDetector(
                       onTap: _isRecording ? null : _startRecording,
@@ -466,6 +584,7 @@ class _PronunciationPracticeScreenState
                         height: _isRecording ? 100 : 120,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
+                          // Color shifts: green (ready) → coral (recording)
                           color: _isRecording ? accentCoral : accentGreen,
                           border: Border.all(color: textDark, width: 3),
                           boxShadow: [
@@ -473,6 +592,7 @@ class _PronunciationPracticeScreenState
                               color: (_isRecording ? accentCoral : accentGreen)
                                   .withOpacity(0.4),
                               blurRadius: 20,
+                              // Glow intensifies during recording
                               spreadRadius: _isRecording ? 10 : 5,
                             ),
                           ],
@@ -486,6 +606,7 @@ class _PronunciationPracticeScreenState
                     ),
                   ),
                   const SizedBox(height: 12),
+                  // Status text adapts to recording state
                   Center(
                     child: Text(
                       _isRecording
@@ -501,12 +622,17 @@ class _PronunciationPracticeScreenState
                     ),
                   ),
 
-                  // Feedback Section
+                  // Feedback Section - Shows scoring results
+                  // Color-coded card indicates performance level
                   if (_showFeedback) ...[
                     const SizedBox(height: 32),
                     Container(
                       padding: const EdgeInsets.all(24),
                       decoration: BoxDecoration(
+                        // Color psychology:
+                        // Green (75+%): Success, mastery
+                        // Orange (60-74%): Improvement needed
+                        // Coral (<60%): Encouragement to retry
                         color: _pronunciationScore >= 75
                             ? accentGreen
                             : _pronunciationScore >= 60
@@ -517,6 +643,7 @@ class _PronunciationPracticeScreenState
                       ),
                       child: Column(
                         children: [
+                          // Large percentage creates visual impact
                           Text(
                             '${_pronunciationScore.toInt()}%',
                             style: const TextStyle(
@@ -526,6 +653,7 @@ class _PronunciationPracticeScreenState
                             ),
                           ),
                           const SizedBox(height: 12),
+                          // Contextual feedback provides actionable guidance
                           Text(
                             _feedbackText,
                             textAlign: TextAlign.center,
@@ -541,9 +669,10 @@ class _PronunciationPracticeScreenState
                   ],
                   const SizedBox(height: 32),
 
-                  // Navigation Buttons
+                  // Navigation Buttons - Word list traversal
                   Row(
                     children: [
+                      // Previous button only shown when not on first word
                       if (_currentWordIndex > 0)
                         Expanded(
                           child: _buildStyledButton(
@@ -554,6 +683,8 @@ class _PronunciationPracticeScreenState
                           ),
                         ),
                       if (_currentWordIndex > 0) const SizedBox(width: 12),
+                      // Next/Complete button always visible
+                      // Takes more space (flex: 2) to emphasize forward progression
                       Expanded(
                         flex: 2,
                         child: _buildStyledButton(
@@ -582,6 +713,14 @@ class _PronunciationPracticeScreenState
     );
   }
 
+  /// Reusable button component with consistent styling.
+  /// 
+  /// Two visual variants:
+  /// - Primary (coral): Main actions (play, record, next)
+  /// - Secondary (beige): Optional actions (slow speed, previous)
+  /// 
+  /// This distinction guides users toward primary learning flow
+  /// while keeping secondary options accessible.
   Widget _buildStyledButton({
     required VoidCallback? onPressed,
     required Widget icon,
