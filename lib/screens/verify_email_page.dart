@@ -2,13 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
 
-// Updated login_screen.dart implementation:
-// Add this import: import 'verify_email_page.dart';
+// Integration instructions for login_screen.dart:
+// 1. Add import: import 'verify_email_page.dart';
+// 2. Replace signup block in _authenticate() with the commented code below
+// 
+// This ensures new accounts are created with email verification requirement
+// and enforces UNIMAS institutional email domain validation (@siswa.unimas.my)
 
-// In _authenticate() method, replace the signup block with:
 /*
 else {
-  // Validate UNIMAS email domain
+  // Validate UNIMAS email domain before account creation
+  // This enforces institutional affiliation and prevents unauthorized registrations
   if (!_emailController.text.trim().endsWith('@siswa.unimas.my')) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -26,10 +30,12 @@ else {
     password: _passwordController.text,
   );
 
-  // Update display name
+  // Set display name immediately after account creation
+  // This ensures user identity is captured before email verification
   await userCredential.user?.updateDisplayName(_nameController.text.trim());
 
-  // Send verification email
+  // Send verification email automatically
+  // User cannot access app features until email is verified
   await userCredential.user?.sendEmailVerification();
 
   if (mounted) {
@@ -43,6 +49,18 @@ else {
 }
 */
 
+/// Email verification screen for new user accounts.
+/// 
+/// Enforces email verification before granting app access, which:
+/// - Confirms user owns the email address (prevents typos/fake emails)
+/// - Validates UNIMAS institutional affiliation
+/// - Enables password recovery via verified email
+/// 
+/// Key features:
+/// - Auto-checks verification status every 3 seconds
+/// - Resend cooldown (60s) prevents email service abuse
+/// - Decorative UI maintains brand consistency with welcome/login screens
+/// - Multiple UX hints guide users through verification process
 class VerifyEmailPage extends StatefulWidget {
   const VerifyEmailPage({Key? key}) : super(key: key);
 
@@ -61,14 +79,18 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
   void initState() {
     super.initState();
 
-    // Check if email is already verified
+    // Check initial verification state
+    // User might have verified in another session before returning
     _isEmailVerified = FirebaseAuth.instance.currentUser?.emailVerified ?? false;
 
     if (!_isEmailVerified) {
-      // Send initial verification email
+      // Send initial verification email automatically
+      // This ensures user receives email immediately after account creation
       _sendVerificationEmail();
 
-      // Start checking verification status periodically
+      // Poll Firebase every 3 seconds to check verification status
+      // This provides near-real-time feedback when user verifies via email
+      // 3-second interval balances responsiveness with Firebase API rate limits
       _timer = Timer.periodic(
         const Duration(seconds: 3),
             (_) => _checkEmailVerified(),
@@ -78,38 +100,56 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
 
   @override
   void dispose() {
+    // Cancel timers to prevent memory leaks and setState calls after disposal
     _timer?.cancel();
     _resendTimer?.cancel();
     super.dispose();
   }
 
+  /// Checks current email verification status from Firebase.
+  /// 
+  /// Calls reload() to fetch fresh user data from server,
+  /// as emailVerified status is cached locally and won't update
+  /// automatically when user clicks verification link.
   Future<void> _checkEmailVerified() async {
-    // Reload user to get latest email verification status
+    // Force refresh user data from Firebase server
+    // Without reload(), cached emailVerified value would never update
     await FirebaseAuth.instance.currentUser?.reload();
 
     setState(() {
       _isEmailVerified = FirebaseAuth.instance.currentUser?.emailVerified ?? false;
     });
 
-    // If email is verified, navigate to next screen
+    // Stop polling once verified to reduce unnecessary API calls
     if (_isEmailVerified) {
       _timer?.cancel();
       _resendTimer?.cancel();
     }
   }
 
+  /// Sends verification email with cooldown mechanism.
+  /// 
+  /// Implements 60-second cooldown between sends to:
+  /// - Prevent email service abuse/spam
+  /// - Comply with Firebase email sending limits
+  /// - Reduce server load from accidental multiple clicks
   Future<void> _sendVerificationEmail() async {
     try {
       final user = FirebaseAuth.instance.currentUser;
+      
+      // Double-check user exists and needs verification
+      // User might have verified in another tab/device
       if (user != null && !user.emailVerified) {
         await user.sendEmailVerification();
 
+        // Start 60-second cooldown period
         setState(() {
           _canResendEmail = false;
-          _resendCountdown = 60; // 60 seconds cooldown
+          _resendCountdown = 60;
         });
 
-        // Start countdown timer
+        // Visual countdown shows remaining wait time
+        // This sets clear expectations and reduces user frustration
         _resendTimer = Timer.periodic(
           const Duration(seconds: 1),
               (timer) {
@@ -118,6 +158,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
                 _resendCountdown--;
               });
             } else {
+              // Re-enable resend button after cooldown expires
               setState(() {
                 _canResendEmail = true;
               });
@@ -149,6 +190,10 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
     }
   }
 
+  /// Signs out current user and returns to login screen.
+  /// 
+  /// Allows users to switch accounts if they registered with wrong email
+  /// or need to use a different UNIMAS email address.
   Future<void> _signOut() async {
     await FirebaseAuth.instance.signOut();
   }
@@ -159,6 +204,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
     final email = user?.email ?? '';
 
     return Scaffold(
+      // Cream background maintains visual consistency with app theme
       backgroundColor: const Color(0xFFFAF3E0),
       appBar: AppBar(
         backgroundColor: const Color(0xFFFAF3E0),
@@ -167,6 +213,8 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
           'Verify Email',
           style: TextStyle(color: Color(0xFFE07A5F)),
         ),
+        // Disable back button - user must verify or sign out
+        // This prevents bypassing email verification requirement
         automaticallyImplyLeading: false,
         actions: [
           IconButton(
@@ -178,7 +226,9 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
       ),
       body: Stack(
         children: [
-          // Decorative apples background
+          // Decorative elements positioned across screen
+          // These create visual interest and maintain brand identity
+          // Positioned outside viewport bounds create "peek-in" effect
           Positioned(top: -30, left: -30, child: _buildApple(60)),
           Positioned(top: 10, left: 60, child: _buildSmallApple(40)),
           Positioned(top: 20, right: -20, child: _buildApple(80)),
@@ -189,14 +239,15 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
           Positioned(bottom: 400, left: 30, child: _buildStar(20)),
           Positioned(bottom: 500, right: 40, child: _buildStar(16)),
 
-          // Cat illustration at bottom
+          // Cat mascot adds friendly, approachable feel
+          // Bottom-left placement balances decorative elements
           Positioned(
             bottom: 20,
             left: 20,
             child: _buildCat(),
           ),
 
-          // Main content
+          // Main content scrollable to accommodate various screen sizes
           SafeArea(
             child: Center(
               child: SingleChildScrollView(
@@ -206,7 +257,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
                   children: [
                     const SizedBox(height: 40),
 
-                    // Star decoration
+                    // Star decoration serves as attention anchor
                     Image.asset(
                       'assets/images/star.png',
                       width: 32,
@@ -216,7 +267,8 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
 
                     const SizedBox(height: 16),
 
-                    // Title
+                    // Dynamic title changes based on verification state
+                    // This provides immediate visual feedback of success
                     Text(
                       _isEmailVerified ? 'Your Email\nhas been verified!' : 'Verify Your Email',
                       style: const TextStyle(
@@ -230,13 +282,14 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
 
                     const SizedBox(height: 32),
 
-                    // Checkmark badge (when verified) or Email Icon
+                    // Visual feedback changes dramatically on verification
+                    // Green checkmark provides clear success indicator
                     if (_isEmailVerified)
                       Container(
                         width: 140,
                         height: 140,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF81B29A),
+                          color: const Color(0xFF81B29A), // Success green
                           borderRadius: BorderRadius.circular(70),
                           boxShadow: [
                             BoxShadow(
@@ -253,6 +306,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
                         ),
                       )
                     else
+                      // Email icon indicates pending verification state
                       Container(
                         padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
@@ -268,7 +322,8 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
 
                     const SizedBox(height: 32),
 
-                    // Email Display
+                    // Display email address for confirmation
+                    // Users can verify they're checking the correct inbox
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                       decoration: BoxDecoration(
@@ -298,7 +353,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
 
                     const SizedBox(height: 24),
 
-                    // Description
+                    // Context-aware description guides next steps
                     Text(
                       _isEmailVerified
                           ? 'Your email has been successfully verified. You can now continue to the app.'
@@ -313,7 +368,9 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
 
                     const SizedBox(height: 32),
 
-                    // UNIMAS Email Notice
+                    // Warning for non-UNIMAS emails
+                    // This catches edge cases where email validation was bypassed
+                    // or user account was created through different flow
                     if (!email.endsWith('@siswa.unimas.my'))
                       Container(
                         padding: const EdgeInsets.all(16),
@@ -341,8 +398,10 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
                         ),
                       ),
 
+                    // Show action buttons based on verification state
                     if (!_isEmailVerified) ...[
-                      // Resend Email Button
+                      // Resend button with visual countdown feedback
+                      // Disabled state with timer prevents spam and sets expectations
                       SizedBox(
                         width: double.infinity,
                         height: 50,
@@ -370,7 +429,8 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
 
                       const SizedBox(height: 16),
 
-                      // Check Status Button
+                      // Manual status check for impatient users
+                      // Provides control when auto-polling feels too slow
                       SizedBox(
                         width: double.infinity,
                         height: 50,
@@ -391,14 +451,15 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
                         ),
                       ),
                     ] else ...[
-                      // Continue Button (when verified)
+                      // Success state button - triggers state rebuild
+                      // Actual navigation handled by AuthWrapper based on verification status
                       SizedBox(
                         width: double.infinity,
                         height: 50,
                         child: ElevatedButton.icon(
                           onPressed: () {
-                            // Navigation will be handled by AuthWrapper
-                            // Just trigger a rebuild
+                            // Trigger rebuild to update AuthWrapper's stream
+                            // This causes app to re-evaluate auth state and navigate accordingly
                             setState(() {});
                           },
                           icon: const Icon(Icons.check_circle),
@@ -407,7 +468,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
                             style: TextStyle(fontSize: 16),
                           ),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF81B29A),
+                            backgroundColor: const Color(0xFF81B29A), // Success green
                             foregroundColor: Colors.white,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
@@ -420,7 +481,8 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
 
                     const SizedBox(height: 24),
 
-                    // Tips Section
+                    // Educational tips reduce support burden
+                    // Addresses common issues users face during email verification
                     if (!_isEmailVerified)
                       Container(
                         padding: const EdgeInsets.all(16),
@@ -447,6 +509,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
                               ],
                             ),
                             const SizedBox(height: 12),
+                            // Each tip addresses common user pain points
                             _buildTip('Check your spam/junk folder if you don\'t see the email'),
                             _buildTip('Make sure you\'re checking the correct email address'),
                             _buildTip('The verification link expires after 24 hours'),
@@ -457,7 +520,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
 
                     const SizedBox(height: 24),
 
-                    // Sign Out Text Button
+                    // Alternative sign-out path for wrong email scenarios
                     TextButton(
                       onPressed: _signOut,
                       child: const Text(
@@ -477,14 +540,19 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
     );
   }
 
+  /// Builds a single tip item with bullet point styling.
+  /// 
+  /// Circular bullet maintains visual consistency with app's
+  /// rounded, friendly design language.
   Widget _buildTip(String text) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Custom bullet point matches brand color
           Container(
-            margin: const EdgeInsets.only(top: 6),
+            margin: const EdgeInsets.only(top: 6), // Vertical alignment with text
             width: 6,
             height: 6,
             decoration: const BoxDecoration(
@@ -499,7 +567,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
               style: const TextStyle(
                 fontSize: 14,
                 color: Color(0xFF3D405B),
-                height: 1.4,
+                height: 1.4, // Line height for readability
               ),
             ),
           ),
@@ -508,6 +576,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
     );
   }
 
+  /// Decorative apple image - large variant.
   Widget _buildApple(double size) {
     return Image.asset(
       'assets/images/apple.png',
@@ -517,6 +586,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
     );
   }
 
+  /// Decorative apple image - small variant.
   Widget _buildSmallApple(double size) {
     return Image.asset(
       'assets/images/apple1.png',
@@ -526,6 +596,8 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
     );
   }
 
+  /// Decorative star/apple variant.
+  /// Asset naming (apple2.png) suggests visual theme consistency.
   Widget _buildStar(double size) {
     return Image.asset(
       'assets/images/apple2.png',
@@ -535,6 +607,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
     );
   }
 
+  /// Cat mascot illustration for brand personality.
   Widget _buildCat() {
     return Image.asset(
       'assets/images/cat.png',
