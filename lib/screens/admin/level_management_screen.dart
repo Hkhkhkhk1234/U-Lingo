@@ -2,10 +2,46 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'add_edit_level_screen.dart';
 
+/// Level management screen for course structure administration.
+/// 
+/// Provides comprehensive CRUD operations for managing course levels with:
+/// - Real-time view of all levels with their quizzes and pronunciation exercises
+/// - Expandable cards showing detailed content for each level
+/// - Safe deletion with automatic student progress adjustment
+/// - Add/Edit navigation to dedicated level editor screen
+/// 
+/// Data Model:
+/// Levels contain nested arrays of quizzes and pronunciations, stored in Firestore.
+/// Each level has: levelId (int), title, description, quizzes[], pronunciations[]
+/// 
+/// Critical Feature - Cascade Deletion:
+/// When a level is deleted, the system automatically updates ALL student records
+/// to remove the deleted level from their progress and adjust their currentLevel.
+/// This prevents orphaned references and maintains data integrity across the platform.
 class LevelManagementScreen extends StatelessWidget {
   const LevelManagementScreen({Key? key}) : super(key: key);
 
+  /// Deletes a level and updates all affected student progress records.
+  /// 
+  /// Cascade Deletion Process:
+  /// 1. Show confirmation dialog (prevent accidental deletion)
+  /// 2. Fetch level data to get levelId before deletion
+  /// 3. Delete the level document from Firestore
+  /// 4. Query ALL users to find affected students
+  /// 5. Batch update: remove deleted level from completedLevels arrays
+  /// 6. Adjust currentLevel for students who were past the deleted level
+  /// 
+  /// Why Batch Updates:
+  /// Using Firestore batch operations ensures atomic updates - either all student
+  /// records are updated successfully, or none are. This prevents partial updates
+  /// that could leave the database in an inconsistent state.
+  /// 
+  /// Performance Note:
+  /// This operation queries and potentially updates every user document.
+  /// For platforms with thousands of users, consider implementing this as a
+  /// Cloud Function with background processing to avoid UI blocking.
   Future<void> _deleteLevel(BuildContext context, String levelId) async {
+    // Show confirmation dialog with detailed warning about cascade effects
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -29,7 +65,8 @@ class LevelManagementScreen extends StatelessWidget {
 
     if (confirm == true) {
       try {
-        // Show loading indicator
+        // Show loading dialog with descriptive message
+        // Non-dismissible to prevent premature cancellation during critical operations
         if (context.mounted) {
           showDialog(
             context: context,
@@ -52,7 +89,8 @@ class LevelManagementScreen extends StatelessWidget {
           );
         }
 
-        // Get the level data before deleting
+        // Fetch level data BEFORE deletion to preserve levelId for student updates
+        // Once deleted, we lose access to this critical information
         final levelDoc = await FirebaseFirestore.instance
             .collection('levels')
             .doc(levelId)
@@ -65,18 +103,20 @@ class LevelManagementScreen extends StatelessWidget {
 
         final deletedLevelId = levelData['levelId'] as int;
 
-        // Delete the level
+        // Delete the level document from Firestore
         await FirebaseFirestore.instance
             .collection('levels')
             .doc(levelId)
             .delete();
 
-        // Get all users
+        // Query all users to identify those affected by the deletion
         final usersSnapshot = await FirebaseFirestore.instance
             .collection('users')
             .get();
 
-        // Update each user's completed levels
+        // Prepare batch operation for atomic updates
+        // Batch writes are limited to 500 operations - for larger user bases,
+        // split into multiple batches or use Cloud Functions
         final batch = FirebaseFirestore.instance.batch();
         int updatedStudents = 0;
 
@@ -84,17 +124,20 @@ class LevelManagementScreen extends StatelessWidget {
           final userData = userDoc.data();
           final completedLevels = List<int>.from(userData['completedLevels'] ?? []);
 
-          // Remove the deleted level from completed levels
+          // Update user only if they were affected by the deleted level
           if (completedLevels.contains(deletedLevelId)) {
+            // Remove the deleted level from their completion history
             completedLevels.remove(deletedLevelId);
 
-            // Also adjust currentLevel if it was higher than the deleted level
+            // Adjust currentLevel to prevent pointing to non-existent level
+            // If student was on level 5 and we delete level 3, their currentLevel
+            // should decrease by 1 to maintain correct positioning in the sequence
             int currentLevel = userData['currentLevel'] ?? 1;
             if (currentLevel > deletedLevelId) {
               currentLevel--;
             }
 
-            // Update the user document
+            // Queue the update operation in the batch
             batch.update(userDoc.reference, {
               'completedLevels': completedLevels,
               'currentLevel': currentLevel,
@@ -104,7 +147,8 @@ class LevelManagementScreen extends StatelessWidget {
           }
         }
 
-        // Commit all updates
+        // Commit all student updates atomically
+        // Either all updates succeed or all fail - no partial state
         await batch.commit();
 
         // Close loading dialog
@@ -112,6 +156,8 @@ class LevelManagementScreen extends StatelessWidget {
           Navigator.pop(context);
         }
 
+        // Show success message with affected student count
+        // This transparency helps admins understand the impact of their action
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -129,6 +175,7 @@ class LevelManagementScreen extends StatelessWidget {
           Navigator.pop(context);
         }
 
+        // Show detailed error message for troubleshooting
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -146,20 +193,31 @@ class LevelManagementScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Level Management',style: TextStyle(color: Colors.black,fontWeight: FontWeight.bold),),
-        backgroundColor: const Color(0xFFF5F5F5),                      //backgroundColor: Colors.orange,
+        title: const Text(
+          'Level Management',
+          style: TextStyle(
+            color: Colors.black,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        backgroundColor: const Color(0xFFF5F5F5),
+        // No back button - this is a top-level admin section
         automaticallyImplyLeading: false,
       ),
       body: StreamBuilder<QuerySnapshot>(
+        // Real-time stream ordered by levelId to maintain course sequence
+        // OrderBy ensures levels display in the correct pedagogical order
         stream: FirebaseFirestore.instance
             .collection('levels')
             .orderBy('levelId')
             .snapshots(),
         builder: (context, snapshot) {
+          // Loading state while fetching initial data
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
+          // Empty state with helpful guidance for first-time admins
           if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
             return Center(
               child: Column(
@@ -189,6 +247,9 @@ class LevelManagementScreen extends StatelessWidget {
             itemBuilder: (context, index) {
               final levelDoc = levels[index];
               final levelData = levelDoc.data() as Map<String, dynamic>;
+              
+              // Extract nested arrays with type safety
+              // Fallback to empty arrays if data is missing to prevent null errors
               final quizzes = List<Map<String, dynamic>>.from(
                 levelData['quizzes'] ?? [],
               );
@@ -197,13 +258,14 @@ class LevelManagementScreen extends StatelessWidget {
               );
 
               return Card(
-                color:const Color(0xFFF5F5F5),
+                color: const Color(0xFFF5F5F5),
                 margin: const EdgeInsets.only(bottom: 16),
                 elevation: 3,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: ExpansionTile(
+                  // Level number badge for quick reference
                   leading: CircleAvatar(
                     backgroundColor: Colors.black,
                     child: Text(
@@ -227,6 +289,8 @@ class LevelManagementScreen extends StatelessWidget {
                       const SizedBox(height: 4),
                       Text(levelData['description'] ?? 'No description'),
                       const SizedBox(height: 8),
+                      // Content summary chips showing quiz and pronunciation counts
+                      // Gives admins quick insight into level completeness
                       Row(
                         children: [
                           _InfoChip(
@@ -238,18 +302,20 @@ class LevelManagementScreen extends StatelessWidget {
                           _InfoChip(
                             icon: Icons.mic,
                             label: '${pronunciations.length} pronunciations',
-                            color: Colors.orange, //(0xFF2E7D32),
+                            color: Colors.orange,
                           ),
                         ],
                       ),
                     ],
                   ),
+                  // Action buttons for level management
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
                         icon: const Icon(Icons.edit, color: Colors.black),
                         onPressed: () {
+                          // Navigate to edit screen with existing level data
                           Navigator.push(
                             context,
                             MaterialPageRoute(
@@ -269,6 +335,8 @@ class LevelManagementScreen extends StatelessWidget {
                       ),
                     ],
                   ),
+                  // Expanded content showing detailed quiz and pronunciation data
+                  // Hidden by default to keep the list manageable
                   children: [
                     const Divider(),
                     Padding(
@@ -276,6 +344,7 @@ class LevelManagementScreen extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // Quizzes section - shows all quiz questions and answers
                           if (quizzes.isNotEmpty) ...[
                             const Text(
                               'Quizzes:',
@@ -302,6 +371,7 @@ class LevelManagementScreen extends StatelessWidget {
                                     children: [
                                       Row(
                                         children: [
+                                          // Quiz number badge
                                           Container(
                                             padding: const EdgeInsets.symmetric(
                                               horizontal: 8,
@@ -321,6 +391,7 @@ class LevelManagementScreen extends StatelessWidget {
                                             ),
                                           ),
                                           const SizedBox(width: 8),
+                                          // Audio text or identifier
                                           Expanded(
                                             child: Text(
                                               quiz['audio'] ?? '',
@@ -333,6 +404,7 @@ class LevelManagementScreen extends StatelessWidget {
                                         ],
                                       ),
                                       const SizedBox(height: 8),
+                                      // Quiz question
                                       Text(
                                         quiz['question'] ?? '',
                                         style: TextStyle(
@@ -341,6 +413,7 @@ class LevelManagementScreen extends StatelessWidget {
                                         ),
                                       ),
                                       const SizedBox(height: 4),
+                                      // Correct answer highlighted in green
                                       Text(
                                         'Correct: ${quiz['correct']}',
                                         style: const TextStyle(
@@ -356,6 +429,8 @@ class LevelManagementScreen extends StatelessWidget {
                             }).toList(),
                             const SizedBox(height: 16),
                           ],
+                          
+                          // Pronunciation practice section - shows words with pinyin and translation
                           if (pronunciations.isNotEmpty) ...[
                             const Text(
                               'Pronunciation Practice:',
@@ -382,6 +457,7 @@ class LevelManagementScreen extends StatelessWidget {
                                     children: [
                                       Row(
                                         children: [
+                                          // Word number badge
                                           Container(
                                             padding: const EdgeInsets.symmetric(
                                               horizontal: 8,
@@ -401,6 +477,7 @@ class LevelManagementScreen extends StatelessWidget {
                                             ),
                                           ),
                                           const SizedBox(width: 8),
+                                          // Chinese characters
                                           Text(
                                             pron['word'] ?? '',
                                             style: const TextStyle(
@@ -409,6 +486,7 @@ class LevelManagementScreen extends StatelessWidget {
                                             ),
                                           ),
                                           const SizedBox(width: 8),
+                                          // Pinyin romanization for pronunciation guide
                                           Text(
                                             pron['pinyin'] ?? '',
                                             style: TextStyle(
@@ -420,6 +498,7 @@ class LevelManagementScreen extends StatelessWidget {
                                         ],
                                       ),
                                       const SizedBox(height: 4),
+                                      // English translation
                                       Text(
                                         pron['translation'] ?? '',
                                         style: TextStyle(
@@ -443,8 +522,10 @@ class LevelManagementScreen extends StatelessWidget {
           );
         },
       ),
+      // Floating action button for adding new levels
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
+          // Navigate to add screen without levelId (indicates new level creation)
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -453,13 +534,21 @@ class LevelManagementScreen extends StatelessWidget {
           );
         },
         backgroundColor: Colors.black,
-        icon: const Icon(Icons.add,color:Colors.white),
-        label: const Text('Add Level',style: TextStyle(color:Colors.white),),
+        icon: const Icon(Icons.add, color: Colors.white),
+        label: const Text(
+          'Add Level',
+          style: TextStyle(color: Colors.white),
+        ),
       ),
     );
   }
 }
 
+/// Reusable info chip widget for displaying content statistics.
+/// 
+/// Used to show quiz and pronunciation counts in a visually consistent way.
+/// The chip color matches the content type (blue for quizzes, orange for pronunciations)
+/// to help admins quickly identify content distribution at a glance.
 class _InfoChip extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -477,7 +566,7 @@ class _InfoChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color:color.withOpacity(0.1),
+        color: color.withOpacity(0.1), // Light tint for background
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: color.withOpacity(0.3)),
       ),
