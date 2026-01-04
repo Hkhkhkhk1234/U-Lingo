@@ -10,6 +10,11 @@ import 'screens/admin/admin_dashboard_screen.dart';
 import 'screens/admin/admin_verify_email_page.dart';
 import 'firebase_options.dart';
 
+/// Application entry point.
+/// 
+/// Initializes Firebase before running the app to ensure all Firebase services
+/// (Auth, Firestore, etc.) are ready before any widgets are built.
+/// ensureInitialized() is required for async operations before runApp().
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
@@ -18,6 +23,10 @@ void main() async {
   runApp(const ULingoApp());
 }
 
+/// Root widget of the U-Lingo language learning application.
+/// 
+/// Configures app-wide theming and routes to AuthWrapper for
+/// authentication-based navigation.
 class ULingoApp extends StatelessWidget {
   const ULingoApp({Key? key}) : super(key: key);
 
@@ -40,19 +49,38 @@ class ULingoApp extends StatelessWidget {
   }
 }
 
+/// Authentication router that determines which screen to display based on user state.
+/// 
+/// Implements a sophisticated routing system that handles:
+/// 1. Authentication status (logged in vs logged out)
+/// 2. User role (admin vs student) with strict separation
+/// 3. Email verification requirements for both roles
+/// 4. Email domain validation (UNIMAS students only)
+/// 5. Onboarding flow (language selection for new students)
+/// 
+/// CRITICAL SECURITY FEATURES:
+/// - Admin document presence takes absolute precedence over user document
+/// - Prevents cross-role access (admins cannot access student portal)
+/// - Enforces email verification before granting access
+/// - Validates institutional email domain (@siswa.unimas.my)
+/// 
+/// Uses nested StreamBuilder and FutureBuilder pattern for reactive auth state
+/// management with Firestore role checking.
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
+      // Listen to auth state changes for automatic re-routing on login/logout
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
         print('=== AUTH WRAPPER DEBUG ===');
         print('Connection state: ${snapshot.connectionState}');
         print('Has data: ${snapshot.hasData}');
 
-        // Show loading while checking auth state
+        // Loading state: initial auth check
+        // Shows while Firebase determines if a user session exists
         if (snapshot.connectionState == ConnectionState.waiting) {
           print('State: WAITING');
           return const Scaffold(
@@ -69,18 +97,20 @@ class AuthWrapper extends StatelessWidget {
           );
         }
 
-        // User is not logged in - show welcome screen
+        // No authenticated user: show welcome/login screen
         if (!snapshot.hasData) {
           print('State: NO USER - Showing WelcomePage');
           return const WelcomePage();
         }
 
+        // User is authenticated: now determine their role and access level
         final user = snapshot.data!;
         print('User ID: ${user.uid}');
         print('User Email: ${user.email}');
         print('Email Verified: ${user.emailVerified}');
 
-        // User is logged in - determine their role and verification status
+        // Check Firestore to determine if user is admin or student
+        // This check is critical for security and proper role-based routing
         return FutureBuilder<Map<String, dynamic>>(
           future: _getUserRoleAndStatus(user.uid),
           builder: (context, roleSnapshot) {
@@ -99,8 +129,9 @@ class AuthWrapper extends StatelessWidget {
               );
             }
 
+            // No role data found: security measure to prevent unauthorized access
+            // Signs user out and returns to welcome screen
             if (!roleSnapshot.hasData) {
-              // No role found - sign out and return to welcome
               print('ERROR: No role data found, signing out');
               FirebaseAuth.instance.signOut();
               return const WelcomePage();
@@ -118,16 +149,19 @@ class AuthWrapper extends StatelessWidget {
             // ============================================
             // ADMIN FLOW
             // ============================================
+            // Admin document presence takes absolute precedence
+            // This prevents admins from accidentally accessing student features
             if (isAdmin) {
-              print('🔑 ADMIN FLOW DETECTED');
+              print('🔐 ADMIN FLOW DETECTED');
 
-              // Email not verified - show admin verification page
+              // Enforce email verification before admin dashboard access
+              // Prevents unauthorized admin account creation
               if (!user.emailVerified) {
                 print('→ AdminVerifyEmailPage (email not verified)');
                 return const AdminVerifyEmailPage();
               }
 
-              // Email verified - show admin dashboard
+              // Email verified: grant full admin dashboard access
               print('→ AdminDashboardScreen ✅');
               return const AdminDashboardScreen();
             }
@@ -137,21 +171,24 @@ class AuthWrapper extends StatelessWidget {
             // ============================================
             print('🎓 STUDENT FLOW DETECTED');
 
-            // Email not verified - show student verification page
+            // Email verification required for students too
+            // Ensures valid institutional email ownership
             if (!user.emailVerified) {
               print('→ VerifyEmailPage (email not verified)');
               return const VerifyEmailPage();
             }
 
-            // Check if user document exists (student account)
+            // Check for user document existence
+            // Missing document indicates incomplete registration or corrupted account
             if (!hasUserDoc) {
-              // Signed in but no user document - might be incomplete signup
               print('⚠️ No user document found, signing out');
               FirebaseAuth.instance.signOut();
               return const WelcomePage();
             }
 
-            // Check email domain
+            // Validate institutional email domain
+            // Only UNIMAS students (@siswa.unimas.my) can access student features
+            // This business rule ensures the platform serves the intended institution
             if (!user.email!.endsWith('@siswa.unimas.my')) {
               print('❌ Invalid email domain: ${user.email}');
               return Scaffold(
@@ -204,7 +241,8 @@ class AuthWrapper extends StatelessWidget {
               );
             }
 
-            // Check if language is selected
+            // Check onboarding completion: language selection
+            // New students must choose a language before accessing courses
             return FutureBuilder<DocumentSnapshot>(
               future: FirebaseFirestore.instance
                   .collection('users')
@@ -226,6 +264,8 @@ class AuthWrapper extends StatelessWidget {
                   );
                 }
 
+                // User document disappeared: data integrity issue
+                // Sign out to force re-authentication and proper account setup
                 if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
                   print('⚠️ User document disappeared, signing out');
                   FirebaseAuth.instance.signOut();
@@ -239,13 +279,14 @@ class AuthWrapper extends StatelessWidget {
                 print('Has Selected Language: $hasSelectedLanguage');
                 print('Language Value: ${userData?['selectedLanguage']}');
 
-                // Language not selected - show language selection
+                // Language selection required: incomplete onboarding
+                // Prevents students from skipping this essential setup step
                 if (!hasSelectedLanguage) {
                   print('→ LanguageSelectionScreen');
                   return const LanguageSelectionScreen();
                 }
 
-                // All good - show dashboard
+                // All validations passed: grant dashboard access
                 print('→ DashboardScreen ✅');
                 return const DashboardScreen();
               },
@@ -256,13 +297,31 @@ class AuthWrapper extends StatelessWidget {
     );
   }
 
-  /// Determines if user is admin or student based on Firestore documents
-  /// This is the KEY function that prevents cross-role access
+  /// Determines user role (admin vs student) by checking Firestore documents.
+  /// 
+  /// CRITICAL SECURITY FUNCTION:
+  /// This is the single source of truth for role-based access control.
+  /// 
+  /// Security model:
+  /// - Checks both 'admins' and 'users' collections in parallel for efficiency
+  /// - Admin document presence takes ABSOLUTE precedence
+  /// - If admin doc exists, user is ALWAYS treated as admin regardless of user doc
+  /// - This prevents admins from accessing student features
+  /// - Prevents privilege escalation attacks
+  /// 
+  /// Returns a map with three booleans:
+  /// - isAdmin: true if admin document exists (primary routing decision)
+  /// - hasAdminDoc: duplicate of isAdmin for explicit clarity
+  /// - hasUserDoc: true if student document exists
+  /// 
+  /// Implementation note: Using Future.wait() for parallel queries reduces latency
+  /// compared to sequential checks, improving user experience on authentication.
   Future<Map<String, dynamic>> _getUserRoleAndStatus(String uid) async {
     try {
-      print('📋 Checking user role for UID: $uid');
+      print('🔍 Checking user role for UID: $uid');
 
-      // Check both collections in parallel for efficiency
+      // Parallel queries for performance
+      // Both documents checked simultaneously rather than sequentially
       final results = await Future.wait([
         FirebaseFirestore.instance.collection('admins').doc(uid).get(),
         FirebaseFirestore.instance.collection('users').doc(uid).get(),
@@ -274,15 +333,17 @@ class AuthWrapper extends StatelessWidget {
       print('Admin doc exists: ${adminDoc.exists}');
       print('User doc exists: ${userDoc.exists}');
 
-      // 🔥 CRITICAL: Admin document takes precedence
+      // 🔐 CRITICAL: Admin document takes precedence
       // If admin doc exists, user is ALWAYS treated as admin
-      // This prevents admins from accessing student portal
+      // This prevents admins from accessing student portal even if they have a user doc
       return {
         'isAdmin': adminDoc.exists,
         'hasAdminDoc': adminDoc.exists,
         'hasUserDoc': userDoc.exists,
       };
     } catch (e) {
+      // Error in role checking: fail-safe to no access
+      // Prevents partial failures from granting unintended access
       print('❌ Error checking user role: $e');
       return {
         'isAdmin': false,
