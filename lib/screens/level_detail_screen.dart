@@ -5,10 +5,28 @@ import 'pronunciation_practice_screen.dart';
 import '../services/audio_player_service.dart';
 import '../services/elevenlabs_service.dart';
 
+/// Interactive quiz screen with audio-based questions for language learning.
+/// 
+/// Implements listening comprehension exercises where:
+/// 1. User listens to audio (text-to-speech from ElevenLabs API)
+/// 2. User selects answer from multiple choice options
+/// 3. Quiz auto-advances through all questions
+/// 4. Progress is saved upon completion
+/// 
+/// Critical features:
+/// - Sequential question flow prevents skipping ahead
+/// - Audio playback uses external TTS service (requires internet)
+/// - Level completion triggers currentLevel increment for progression unlocking
+/// - Optional pronunciation practice available after quiz
+/// 
+/// State management approach:
+/// - Local state tracks quiz progress (_currentQuizIndex, _score)
+/// - Firestore updated only on completion (reduces write operations)
+/// - Loading states prevent duplicate API calls during audio generation
 class LevelDetailScreen extends StatefulWidget {
-  final String levelDocId;
-  final int levelId;
-  final String levelTitle;
+  final String levelDocId; // Firestore document ID for level data
+  final int levelId; // Numeric level identifier for progression tracking
+  final String levelTitle; // Display name for user context
 
   const LevelDetailScreen({
     Key? key,
@@ -22,14 +40,16 @@ class LevelDetailScreen extends StatefulWidget {
 }
 
 class _LevelDetailScreenState extends State<LevelDetailScreen> {
-  int _currentQuizIndex = 0;
-  int _score = 0;
-  bool _showResult = false;
-  String? _selectedAnswer;
-  bool _isLoadingAudio = false;
-  bool _isPlayingAudio = false;
-  bool _isLoadingLevel = true;
+  int _currentQuizIndex = 0; // Tracks which question is currently displayed
+  int _score = 0; // Running total of correct answers
+  bool _showResult = false; // Toggles between quiz and results screen
+  String? _selectedAnswer; // Currently selected answer option
+  bool _isLoadingAudio = false; // True while TTS API generates audio
+  bool _isPlayingAudio = false; // True during audio playback
+  bool _isLoadingLevel = true; // True while fetching level data from Firestore
 
+  // Level content loaded once during initialization
+  // Stored locally to avoid repeated Firestore reads during quiz
   List<Map<String, dynamic>> _quizzes = [];
   List<Map<String, dynamic>> _pronunciations = [];
 
@@ -39,6 +59,13 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
     _loadLevelData();
   }
 
+  /// Fetches quiz and pronunciation data for this level from Firestore.
+  /// 
+  /// Data structure loaded once at initialization rather than streaming
+  /// because quiz content shouldn't change mid-session. This approach:
+  /// - Reduces Firestore read costs
+  /// - Prevents UI disruption if admin modifies content during user session
+  /// - Simplifies state management (no StreamBuilder needed)
   Future<void> _loadLevelData() async {
     try {
       final levelDoc = await FirebaseFirestore.instance
@@ -49,6 +76,7 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
       if (levelDoc.exists) {
         final data = levelDoc.data()!;
         setState(() {
+          // Cast to List<Map> to match quiz data structure
           _quizzes = List<Map<String, dynamic>>.from(data['quizzes'] ?? []);
           _pronunciations = List<Map<String, dynamic>>.from(
             data['pronunciations'] ?? [],
@@ -64,12 +92,33 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
     }
   }
 
+  /// Returns currently displayed quiz question data.
+  /// 
+  /// Computed getter provides clean access to current question without
+  /// repeating array bounds checking throughout the code.
   Map<String, dynamic> get _currentQuiz {
     if (_quizzes.isEmpty) return {};
     return _quizzes[_currentQuizIndex];
   }
 
+  /// Generates and plays audio for current quiz question using TTS service.
+  /// 
+  /// Multi-step process:
+  /// 1. Extract audio text from quiz data
+  /// 2. Call ElevenLabs API to generate speech (network request)
+  /// 3. Play audio bytes through device speaker
+  /// 
+  /// Loading states prevent:
+  /// - Duplicate API calls if user taps button repeatedly
+  /// - Race conditions from overlapping audio requests
+  /// - UI freezing during network operations
+  /// 
+  /// Error handling provides user feedback if:
+  /// - Network request fails (no internet, API down)
+  /// - Audio bytes are invalid/corrupted
+  /// - Device audio playback fails
   Future<void> _playAudio() async {
+    // Guard against multiple simultaneous audio requests
     if (_isLoadingAudio || _isPlayingAudio || _quizzes.isEmpty) return;
 
     setState(() {
@@ -79,11 +128,16 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
 
     try {
       final audioText = _currentQuiz['audio'] as String;
+      
+      // Network request to ElevenLabs TTS API
+      // This is the most likely failure point (requires internet)
       final audioBytes = await ElevenLabsService.textToSpeech(audioText);
 
       if (audioBytes != null) {
+        // Play audio through device speaker
         await AudioPlayerService.playAudio(audioBytes);
       } else {
+        // API returned null - likely service error or rate limit
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -104,6 +158,8 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
         );
       }
     } finally {
+      // Reset loading states regardless of success/failure
+      // Mounted check prevents setState after navigation
       if (mounted) {
         setState(() {
           _isLoadingAudio = false;
@@ -113,30 +169,57 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
     }
   }
 
+  /// Records user's answer selection without submitting.
+  /// 
+  /// Separating selection from submission allows users to change their
+  /// mind before confirming. Submit button remains disabled until
+  /// selection is made, providing clear visual feedback.
   void _selectAnswer(String answer) {
     setState(() {
       _selectedAnswer = answer;
     });
   }
 
+  /// Validates answer, updates score, and advances to next question.
+  /// 
+  /// No answer feedback is shown immediately - this design choice:
+  /// - Reduces anxiety by not highlighting mistakes
+  /// - Maintains quiz momentum and engagement
+  /// - Shows cumulative results at the end instead
+  /// 
+  /// Auto-advances to keep flow moving without requiring extra button tap.
   void _submitAnswer() {
     if (_selectedAnswer == null) return;
 
+    // Check correctness and update score
     final isCorrect = _selectedAnswer == _currentQuiz['correct'];
     if (isCorrect) {
       _score++;
     }
 
+    // Either advance to next question or complete quiz
     if (_currentQuizIndex < _quizzes.length - 1) {
       setState(() {
         _currentQuizIndex++;
-        _selectedAnswer = null;
+        _selectedAnswer = null; // Reset selection for next question
       });
     } else {
+      // Last question - trigger completion flow
       _completeLevel();
     }
   }
 
+  /// Updates user's progress in Firestore upon level completion.
+  /// 
+  /// Critical progression logic:
+  /// - Adds levelId to completedLevels array (tracks history)
+  /// - Increments currentLevel only if this was the current level
+  ///   (prevents skipping ahead if user revisits old level)
+  /// 
+  /// This approach allows:
+  /// - Users to replay completed levels without affecting progression
+  /// - Sequential unlocking of new content
+  /// - Accurate completion tracking for achievements/stats
   Future<void> _completeLevel() async {
     final userId = FirebaseAuth.instance.currentUser!.uid;
     final userDoc = await FirebaseFirestore.instance
@@ -148,15 +231,20 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
     final completedLevels = List<int>.from(userData['completedLevels'] ?? []);
     final currentLevel = userData['currentLevel'] ?? 1;
 
+    // Only update if this level hasn't been completed before
+    // Prevents duplicate entries in completedLevels array
     if (!completedLevels.contains(widget.levelId)) {
       completedLevels.add(widget.levelId);
 
       await FirebaseFirestore.instance.collection('users').doc(userId).update({
         'completedLevels': completedLevels,
+        // Unlock next level only if completing current level
+        // If replaying old level, currentLevel stays unchanged
         'currentLevel': widget.levelId == currentLevel ? currentLevel + 1 : currentLevel,
       });
     }
 
+    // Show results screen
     setState(() {
       _showResult = true;
     });
@@ -164,6 +252,7 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Loading state: Show spinner while fetching level data
     if (_isLoadingLevel) {
       return Scaffold(
         backgroundColor: const Color(0xFFFAF7F0),
@@ -176,6 +265,8 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
       );
     }
 
+    // Empty state: No quiz content available
+    // This occurs if admin hasn't added quizzes to this level yet
     if (_quizzes.isEmpty) {
       return Scaffold(
         backgroundColor: const Color(0xFFFAF7F0),
@@ -209,6 +300,8 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
       );
     }
 
+    // Results screen: Shows score and pass/fail feedback
+    // 70% threshold determines success messaging
     if (_showResult) {
       return Scaffold(
         backgroundColor: const Color(0xFFFAF7F0),
@@ -223,6 +316,8 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
+                // Visual feedback based on performance
+                // Green celebration for passing, orange smile for needs improvement
                 Icon(
                   _score >= _quizzes.length * 0.7
                       ? Icons.celebration
@@ -233,6 +328,8 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
                       : Colors.orange,
                 ),
                 const SizedBox(height: 24),
+                // Positive messaging even for lower scores
+                // Encourages continued effort without being discouraging
                 Text(
                   _score >= _quizzes.length * 0.7
                       ? 'Great Job!'
@@ -251,6 +348,8 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
                   ),
                 ),
                 const SizedBox(height: 48),
+                // Continue button returns to roadmap
+                // Level completion already saved, so safe to navigate back
                 SizedBox(
                   width: double.infinity,
                   height: 50,
@@ -273,11 +372,14 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
       );
     }
 
+    // Main quiz interface
     return Scaffold(
       backgroundColor: const Color(0xFFFAF7F0),
       appBar: AppBar(
         backgroundColor: const Color(0xFFFAF7F0),
         elevation: 0,
+        // Close button instead of back button suggests modal-like interaction
+        // Clicking exits quiz without saving progress (intentional design)
         leading: IconButton(
           icon: const Icon(Icons.close, color: Colors.black),
           onPressed: () => Navigator.pop(context),
@@ -286,7 +388,8 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
       ),
       body: Column(
         children: [
-          // Progress bar
+          // Progress bar shows quiz completion percentage
+          // Visual feedback helps users gauge time commitment
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: ClipRRect(
@@ -306,7 +409,7 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const SizedBox(height: 40),
-                  // Title
+                  // Instruction text sets context for audio interaction
                   const Text(
                     'Listen Carefully',
                     style: TextStyle(
@@ -317,7 +420,9 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 60),
-                  // Audio button
+                  
+                  // Audio playback button - primary interaction element
+                  // Large circular design makes it obvious and easy to tap
                   Center(
                     child: GestureDetector(
                       onTap: _playAudio,
@@ -342,6 +447,7 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
                           ),
                         )
                             : Icon(
+                          // Icon changes subtly during playback
                           _isPlayingAudio
                               ? Icons.volume_up
                               : Icons.volume_up_outlined,
@@ -352,7 +458,9 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
                     ),
                   ),
                   const Spacer(),
-                  // Answer options
+                  
+                  // Answer options in flexible wrap layout
+                  // Adapts to varying answer lengths and screen sizes
                   Wrap(
                     alignment: WrapAlignment.center,
                     spacing: 12,
@@ -372,10 +480,12 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
                               vertical: 16,
                             ),
                             decoration: BoxDecoration(
+                              // Color changes on selection for clear visual feedback
                               color: isSelected
-                                  ? const Color(0xFF8FAD88)
-                                  : const Color(0xFFE8B4A0),
+                                  ? const Color(0xFF8FAD88) // Green for selected
+                                  : const Color(0xFFE8B4A0), // Peach for unselected
                               borderRadius: BorderRadius.circular(30),
+                              // Border adds extra emphasis to selected state
                               border: isSelected
                                   ? Border.all(
                                 color: const Color(0xFF6B8F63),
@@ -397,7 +507,9 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
                     ),
                   ),
                   const SizedBox(height: 40),
-                  // Confirm button
+                  
+                  // Confirm button - disabled until answer selected
+                  // Button text changes on last question to signal quiz completion
                   SizedBox(
                     height: 56,
                     child: ElevatedButton(
@@ -422,6 +534,10 @@ class _LevelDetailScreenState extends State<LevelDetailScreen> {
                       ),
                     ),
                   ),
+                  
+                  // Optional pronunciation practice button
+                  // Only shown if level includes pronunciation exercises
+                  // Allows bypassing quiz to go directly to speaking practice
                   if (_pronunciations.isNotEmpty) const SizedBox(height: 16),
                   if (_pronunciations.isNotEmpty)
                     SizedBox(
