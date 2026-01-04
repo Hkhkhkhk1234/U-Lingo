@@ -2,6 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fl_chart/fl_chart.dart';
 
+/// Analytics dashboard displaying student registration metrics and trends.
+/// 
+/// Provides administrators with key insights through:
+/// - Real-time summary statistics (total, recent, avg per day, active users)
+/// - Interactive line chart showing registration trends over time
+/// - Detailed daily registration table with the most recent 10 days
+/// - Time period filtering (7 days, 30 days, 90 days, all time)
+/// 
+/// Uses fl_chart package for data visualization and Firestore streams
+/// for live data updates.
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({Key? key}) : super(key: key);
 
@@ -10,6 +20,7 @@ class ReportsScreen extends StatefulWidget {
 }
 
 class _ReportsScreenState extends State<ReportsScreen> {
+  // Default to 7-day view for most actionable recent insights
   String _selectedPeriod = '7 Days';
   final List<String> _periods = ['7 Days', '30 Days', '90 Days', 'All Time'];
 
@@ -28,8 +39,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ),
         backgroundColor: Colors.white,
         elevation: 0,
+        // No back button since this is a primary navigation screen
         automaticallyImplyLeading: false,
         actions: [
+          // Time period selector in AppBar for easy access
+          // Positioned in actions for right-alignment following convention
           Padding(
             padding: const EdgeInsets.only(right: 16),
             child: Container(
@@ -64,6 +78,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ],
       ),
       body: StreamBuilder<QuerySnapshot>(
+        // Real-time updates ensure dashboard always shows current data
         stream: FirebaseFirestore.instance.collection('users').snapshots(),
         builder: (context, snapshot) {
           if (!snapshot.hasData) {
@@ -73,27 +88,34 @@ class _ReportsScreenState extends State<ReportsScreen> {
           final users = snapshot.data!.docs;
 
           // Calculate registration data per day
+          // Using Map for O(1) lookup and easy date-based aggregation
           Map<String, int> registrationsPerDay = {};
           DateTime now = DateTime.now();
+          
+          // Convert selected period to days for consistent processing
+          // All Time defaults to 365 days for practical chart rendering
           int daysToShow = _selectedPeriod == '7 Days' ? 7
               : _selectedPeriod == '30 Days' ? 30
               : _selectedPeriod == '90 Days' ? 90
               : 365;
 
-          // Initialize days with 0
+          // Initialize all dates with 0 to show gaps in registration activity
+          // This ensures the chart displays all days even with no registrations
           for (int i = daysToShow - 1; i >= 0; i--) {
             final date = now.subtract(Duration(days: i));
             final dateKey = '${date.day}/${date.month}';
             registrationsPerDay[dateKey] = 0;
           }
 
-          // Count registrations
+          // Aggregate registrations by date
+          // Only counts registrations within the selected time period
           for (var user in users) {
             final data = user.data() as Map<String, dynamic>;
             if (data['createdAt'] != null) {
               final createdDate = (data['createdAt'] as Timestamp).toDate();
               final daysDiff = now.difference(createdDate).inDays;
 
+              // Filter to only include registrations within selected period
               if (daysDiff <= daysToShow) {
                 final dateKey = '${createdDate.day}/${createdDate.month}';
                 registrationsPerDay[dateKey] = (registrationsPerDay[dateKey] ?? 0) + 1;
@@ -101,12 +123,13 @@ class _ReportsScreenState extends State<ReportsScreen> {
             }
           }
 
-          // Calculate summary statistics
+          // Calculate summary statistics for dashboard cards
           final totalRegistrations = users.length;
           final recentRegistrations = registrationsPerDay.values.reduce((a, b) => a + b);
           final avgPerDay = recentRegistrations / daysToShow;
 
-          // Calculate active users (users with streak > 0)
+          // Active users defined as having an ongoing learning streak
+          // This metric indicates engagement level beyond just registration
           final activeUsers = users.where((user) {
             final data = user.data() as Map<String, dynamic>;
             return (data['streak'] ?? 0) > 0;
@@ -118,6 +141,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Summary Stats Cards
+                // Four key metrics provide at-a-glance dashboard overview
                 Row(
                   children: [
                     Expanded(
@@ -187,6 +211,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                         LineChartData(
                           gridData: FlGridData(
                             show: true,
+                            // Hide vertical lines to reduce visual clutter
                             drawVerticalLine: false,
                             horizontalInterval: 1,
                             getDrawingHorizontalLine: (value) {
@@ -197,6 +222,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                             },
                           ),
                           titlesData: FlTitlesData(
+                            // Left axis shows registration count
                             leftTitles: AxisTitles(
                               sideTitles: SideTitles(
                                 showTitles: true,
@@ -212,9 +238,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
                                 },
                               ),
                             ),
+                            // Bottom axis shows dates
+                            // Interval adjusts for readability at different time scales
                             bottomTitles: AxisTitles(
                               sideTitles: SideTitles(
                                 showTitles: true,
+                                // Show every 10th day for longer periods to prevent overlap
                                 interval: daysToShow > 30 ? 10 : 1,
                                 getTitlesWidget: (value, meta) {
                                   final index = value.toInt();
@@ -248,6 +277,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           ),
                           lineBarsData: [
                             LineChartBarData(
+                              // Convert map entries to chart data points
+                              // Index becomes x-axis, count becomes y-axis
                               spots: registrationsPerDay.entries
                                   .toList()
                                   .asMap()
@@ -261,6 +292,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                               isCurved: true,
                               color: Colors.black,
                               barWidth: 2,
+                              // Show dots at each data point for precise value indication
                               dotData: FlDotData(
                                 show: true,
                                 getDotPainter: (spot, percent, barData, index) {
@@ -271,12 +303,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
                                   );
                                 },
                               ),
+                              // Subtle fill below line enhances trend visualization
                               belowBarData: BarAreaData(
                                 show: true,
                                 color: Colors.black.withOpacity(0.05),
                               ),
                             ),
                           ],
+                          // Force y-axis to start at 0 for accurate visual comparison
                           minY: 0,
                         ),
                       ),
@@ -304,12 +338,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Table(
+                      // Column widths balanced for optimal data display
+                      // Date gets more space for readability
                       columnWidths: const {
                         0: FlexColumnWidth(2),
                         1: FlexColumnWidth(1),
                         2: FlexColumnWidth(2),
                       },
                       children: [
+                        // Table header with background color for distinction
                         TableRow(
                           decoration: BoxDecoration(
                             color: const Color(0xFFF5F5F5),
@@ -351,7 +388,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
                             ),
                           ],
                         ),
+                        // Show last 10 days in reverse chronological order
+                        // Reversed and limited to focus on most recent activity
                         ...registrationsPerDay.entries.toList().reversed.take(10).map((entry) {
+                          // Simple trend indicator: any registrations = "Up", none = "Stable"
+                          // Future enhancement could compare to previous period
                           final trend = entry.value > 0 ? 'Up' : 'Stable';
                           final trendColor = entry.value > 0 ? Colors.green : Colors.grey;
 
@@ -414,11 +455,30 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 }
 
+/// Reusable card widget for displaying key performance metrics.
+/// 
+/// Features a consistent visual design with:
+/// - Color-coded icon indicating metric type
+/// - Large numeric value for quick scanning
+/// - Descriptive title and time period subtitle
+/// - Mock percentage indicator (currently calculated as value.length * 2)
+/// 
+/// Note: The percentage calculation is a placeholder and should be replaced
+/// with actual trend analysis comparing to previous periods.
 class _ReportCard extends StatelessWidget {
+  /// Display title for the metric (e.g., "Total Registrations")
   final String title;
+  
+  /// Numeric value to display prominently
   final String value;
+  
+  /// Icon representing the metric type
   final IconData icon;
+  
+  /// Brand color for icon background and visual identity
   final Color color;
+  
+  /// Contextual information (e.g., "All time", "7 Days")
   final String subtitle;
 
   const _ReportCard({
@@ -445,6 +505,7 @@ class _ReportCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                // Icon container with subtle background matching the metric's color
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
@@ -453,6 +514,8 @@ class _ReportCard extends StatelessWidget {
                   ),
                   child: Icon(icon, size: 24, color: color),
                 ),
+                // Percentage badge showing growth indicator
+                // TODO: Replace placeholder calculation with real trend comparison
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
@@ -463,6 +526,7 @@ class _ReportCard extends StatelessWidget {
                     children: [
                       const Icon(Icons.arrow_upward, color: Color(0xFF4CAF50), size: 12),
                       const SizedBox(width: 2),
+                      // Placeholder calculation: should compare to previous period
                       Text(
                         '${(value.length * 2)}%',
                         style: const TextStyle(
@@ -477,6 +541,7 @@ class _ReportCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
+            // Large value display for maximum visibility and quick scanning
             Text(
               value,
               style: const TextStyle(
@@ -486,6 +551,7 @@ class _ReportCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 4),
+            // Title describes what the metric represents
             Text(
               title,
               style: TextStyle(
@@ -495,6 +561,7 @@ class _ReportCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 2),
+            // Subtitle provides time period context
             Text(
               subtitle,
               style: TextStyle(
