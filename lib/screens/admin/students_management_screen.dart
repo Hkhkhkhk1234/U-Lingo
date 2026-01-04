@@ -1,28 +1,41 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-
+/// Screen for viewing and managing all registered students in the language learning app.
+/// 
+/// Provides real-time student list with search functionality, displaying key metrics
+/// like progress, streak, and completion status. Uses Firestore streams for live updates
+/// when student data changes across devices.
+/// 
+/// Features:
+/// - Real-time student list ordered by join date (newest first)
+/// - Search by name or email
+/// - Detailed student information dialog
+/// - Visual progress indicators (level, completed courses, streak)
 class StudentsManagementScreen extends StatefulWidget {
   const StudentsManagementScreen({Key? key}) : super(key: key);
-
 
   @override
   State<StudentsManagementScreen> createState() => _StudentsManagementScreenState();
 }
 
-
 class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
+  // Search query stored in lowercase for case-insensitive comparison
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
 
-
   @override
   void dispose() {
+    // Prevent memory leaks by disposing controller
     _searchController.dispose();
     super.dispose();
   }
 
-
+  /// Displays comprehensive student information in a modal dialog.
+  /// 
+  /// Shows all relevant student data including learning progress, streak,
+  /// and account creation date. Uses a scrollable content area to handle
+  /// varying amounts of information gracefully on different screen sizes.
   void _showStudentDetails(Map<String, dynamic> studentData, String studentId) {
     showDialog(
       context: context,
@@ -67,12 +80,14 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
                 value: '${studentData['currentLevel'] ?? 1}',
               ),
               const SizedBox(height: 12),
+              // Shows completion progress out of total 10 levels
               _DetailRow(
                 icon: Icons.check_circle,
                 label: 'Completed Levels',
                 value: '${List<int>.from(studentData['completedLevels'] ?? []).length} / 10',
               ),
               const SizedBox(height: 12),
+              // Streak displayed in days to motivate consistent learning
               _DetailRow(
                 icon: Icons.local_fire_department,
                 label: 'Streak',
@@ -102,12 +117,12 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
     );
   }
 
-
+  /// Converts Firestore Timestamp to readable date format (DD/MM/YYYY).
+  /// Uses simple format for international compatibility.
   String _formatDate(Timestamp timestamp) {
     final date = timestamp.toDate();
     return '${date.day}/${date.month}/${date.year}';
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -124,11 +139,13 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
         ),
         backgroundColor: const Color(0xFFF5F5F5),
         elevation: 0,
+        // No back button since this is a primary navigation screen
         automaticallyImplyLeading: false,
       ),
       body: Column(
         children: [
-          // Search Bar
+          // Search Bar Section
+          // Sticky search bar at top for easy access while scrolling
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             color: const Color(0xFFF5F5F5),
@@ -138,6 +155,7 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
                 hintText: 'lessons by title, number, or description...',
                 hintStyle: TextStyle(color: Colors.grey[500], fontSize: 14),
                 prefixIcon: Icon(Icons.search, color: Colors.grey[600]),
+                // Show clear button only when search has text
                 suffixIcon: _searchQuery.isNotEmpty
                     ? IconButton(
                   icon: const Icon(Icons.clear, color: Colors.grey),
@@ -163,26 +181,30 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
                 fillColor: Colors.white,
                 contentPadding: const EdgeInsets.symmetric(vertical: 12),
               ),
+              // Convert to lowercase immediately for case-insensitive search
               onChanged: (value) {
                 setState(() => _searchQuery = value.toLowerCase());
               },
             ),
           ),
 
-
-          // Students List
+          // Students List Section
+          // Uses StreamBuilder for real-time updates from Firestore
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
+              // Order by createdAt descending shows newest students first
+              // This helps administrators track recent registrations
               stream: FirebaseFirestore.instance
                   .collection('users')
                   .orderBy('createdAt', descending: true)
                   .snapshots(),
               builder: (context, snapshot) {
+                // Show loading indicator while initial data loads
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator(color: Colors.black));
                 }
 
-
+                // Empty state when no students exist in database
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                   return Center(
                     child: Column(
@@ -199,11 +221,10 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
                   );
                 }
 
-
                 var students = snapshot.data!.docs;
 
-
                 // Filter students based on search query
+                // Searches both name and email fields for maximum flexibility
                 if (_searchQuery.isNotEmpty) {
                   students = students.where((doc) {
                     final data = doc.data() as Map<String, dynamic>;
@@ -213,7 +234,8 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
                   }).toList();
                 }
 
-
+                // Show "no results" state when search yields no matches
+                // Differentiated from empty database state for clarity
                 if (students.isEmpty && _searchQuery.isNotEmpty) {
                   return Center(
                     child: Column(
@@ -230,9 +252,10 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
                   );
                 }
 
-
+                // Main content display with student list and summary
                 return Column(
                   children: [
+                    // Summary header showing total and active student counts
                     Padding(
                       padding: const EdgeInsets.all(16),
                       child: Row(
@@ -246,6 +269,8 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
                               color: Colors.black,
                             ),
                           ),
+                          // Active badge (currently all students are active)
+                          // Future enhancement could track last login date
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                             decoration: BoxDecoration(
@@ -270,6 +295,7 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
                         ],
                       ),
                     ),
+                    // Scrollable student list with dividers for visual separation
                     Expanded(
                       child: Container(
                         color: Colors.white,
@@ -283,16 +309,20 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
                           itemBuilder: (context, index) {
                             final studentDoc = students[index];
                             final studentData = studentDoc.data() as Map<String, dynamic>;
+                            
+                            // Extract key metrics for display
+                            // Defaults prevent errors if data fields are missing
                             final completedLevels = List<int>.from(
                                 studentData['completedLevels'] ?? []);
                             final currentLevel = studentData['currentLevel'] ?? 1;
                             final streak = studentData['streak'] ?? 0;
 
-
                             return Container(
                               padding: const EdgeInsets.symmetric(vertical: 16),
                               child: Row(
                                 children: [
+                                  // Avatar shows first letter of student name
+                                  // Provides visual distinction between students
                                   CircleAvatar(
                                     backgroundColor: Colors.black,
                                     radius: 20,
@@ -306,6 +336,7 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
                                     ),
                                   ),
                                   const SizedBox(width: 16),
+                                  // Student info section with name, email, and progress badges
                                   Expanded(
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -327,6 +358,9 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
                                           ),
                                         ),
                                         const SizedBox(height: 8),
+                                        // Progress indicators as colored badges
+                                        // Color coding (blue=level, green=completion, orange=streak)
+                                        // helps users quickly scan important metrics
                                         Row(
                                           children: [
                                             Container(
@@ -367,6 +401,8 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
                                               ),
                                             ),
                                             const SizedBox(width: 8),
+                                            // Streak indicator with fire icon
+                                            // Visual metaphor reinforces gamification
                                             const Icon(Icons.local_fire_department,
                                                 size: 14, color: Colors.orange),
                                             Text(
@@ -381,6 +417,7 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
                                       ],
                                     ),
                                   ),
+                                  // More button opens detailed student information dialog
                                   IconButton(
                                     icon: const Icon(Icons.more_vert, color: Colors.black),
                                     onPressed: () => _showStudentDetails(
@@ -407,12 +444,20 @@ class _StudentsManagementScreenState extends State<StudentsManagementScreen> {
   }
 }
 
-
+/// Reusable widget for displaying labeled information rows in the student details dialog.
+/// 
+/// Provides consistent formatting for displaying key-value pairs with icons.
+/// The compact two-line layout (label above value) saves vertical space
+/// while maintaining readability in the dialog.
 class _DetailRow extends StatelessWidget {
+  /// Icon representing the type of information (email, level, streak, etc.)
   final IconData icon;
+  
+  /// Label describing the information (e.g., "Email", "Current Level")
   final String label;
+  
+  /// The actual value to display (e.g., "user@email.com", "5")
   final String value;
-
 
   const _DetailRow({
     Key? key,
@@ -420,7 +465,6 @@ class _DetailRow extends StatelessWidget {
     required this.label,
     required this.value,
   }) : super(key: key);
-
 
   @override
   Widget build(BuildContext context) {
@@ -433,6 +477,7 @@ class _DetailRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Label in smaller, muted text
               Text(
                 label,
                 style: const TextStyle(
@@ -442,6 +487,7 @@ class _DetailRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 2),
+              // Value in larger, prominent text for easy scanning
               Text(
                 value,
                 style: const TextStyle(
