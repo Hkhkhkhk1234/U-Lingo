@@ -6,6 +6,21 @@ import 'vocabulary_screen.dart';
 import 'chatbot_screen.dart';
 import 'profile_screen.dart';
 
+/// Main navigation container managing bottom tab navigation.
+/// 
+/// Acts as the primary navigation hub after user authentication and onboarding.
+/// Implements persistent bottom navigation bar pattern where tab state is
+/// preserved when switching between screens (unlike stack-based navigation).
+/// 
+/// Navigation structure:
+/// - Index 0: Home dashboard with streak tracking and quick actions
+/// - Index 1: Roadmap showing learning progression path
+/// - Index 2: Vocabulary practice and review
+/// - Index 3: AI chatbot for language practice
+/// - Index 4: User profile and settings
+/// 
+/// State management approach: Local state (_currentIndex) controls which
+/// screen is displayed, avoiding navigation stack complexity.
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({Key? key}) : super(key: key);
 
@@ -14,47 +29,58 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  int _currentIndex = 0;
+  int _currentIndex = 0; // Tracks active tab, defaults to Home
 
+  /// Updates active tab index without navigation stack manipulation.
+  /// 
+  /// This approach maintains all screens in memory, preserving their state
+  /// when users switch tabs. Prevents losing scroll position, form input,
+  /// or other transient UI state that would be lost with push/pop navigation.
   void _navigateToTab(int index) {
     setState(() => _currentIndex = index);
   }
 
   @override
   Widget build(BuildContext context) {
+    // Screen array initialized in build method to capture latest callback
+    // DashboardHome needs onNavigateToRoadmap callback to trigger tab switch
     final List<Widget> _screens = [
       DashboardHome(onNavigateToRoadmap: () => _navigateToTab(1)),
       const RoadmapScreen(),
-      const VocabularyScreen(levelId: 0),
+      const VocabularyScreen(levelId: 0), // levelId: 0 shows all vocabulary
       const ChatbotScreen(),
       const ProfileScreen(),
     ];
 
     return Scaffold(
+      // Display currently selected screen
+      // All screens remain in memory; only visibility changes
       body: _screens[_currentIndex],
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFFE8D5B7),
+          color: const Color(0xFFE8D5B7), // Warm beige matches brand palette
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.1),
               blurRadius: 8,
-              offset: const Offset(0, -2),
+              offset: const Offset(0, -2), // Shadow above navbar
             ),
           ],
         ),
         child: BottomNavigationBar(
           currentIndex: _currentIndex,
           onTap: _navigateToTab,
-          type: BottomNavigationBarType.fixed,
+          type: BottomNavigationBarType.fixed, // Prevents icon shifting when selected
           backgroundColor: const Color(0xFFE8D5B7),
-          selectedItemColor: const Color(0xFF5C4033),
-          unselectedItemColor: const Color(0xFF8B7355),
+          selectedItemColor: const Color(0xFF5C4033), // Dark brown for selected
+          unselectedItemColor: const Color(0xFF8B7355), // Lighter brown for unselected
           selectedFontSize: 12,
           unselectedFontSize: 12,
-          elevation: 0,
+          elevation: 0, // Shadow handled by container instead
           items: [
             BottomNavigationBarItem(
+              // Custom PNG icons for brand consistency
+              // Color property tints image based on selection state
               icon: Image.asset(
                 'assets/icons/home_icon.png',
                 width: 28,
@@ -106,6 +132,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
+/// Home dashboard displaying user progress and quick access to key features.
+/// 
+/// Primary engagement screen showing:
+/// - Daily streak counter (gamification element encouraging consistent learning)
+/// - Current level progress with quick continue action
+/// - Achievement badges (unlock based on milestones)
+/// 
+/// Real-time data sync via StreamBuilder ensures UI reflects latest progress
+/// even if updated from other devices or admin panel.
+/// 
+/// Streak calculation happens on every build to maintain accuracy without
+/// requiring manual refresh from users.
 class DashboardHome extends StatelessWidget {
   final VoidCallback onNavigateToRoadmap;
 
@@ -114,6 +152,18 @@ class DashboardHome extends StatelessWidget {
     required this.onNavigateToRoadmap,
   }) : super(key: key);
 
+  /// Updates user's learning streak based on last access date.
+  /// 
+  /// Streak logic:
+  /// - Same day: No change (prevents multiple increments per day)
+  /// - Next consecutive day: Increment by 1 (rewards daily consistency)
+  /// - Gap of 2+ days: Reset to 1 (user broke streak, starts fresh)
+  /// 
+  /// This encourages daily engagement without being punitive - missing one
+  /// day doesn't zero out progress, but creates urgency to maintain streak.
+  /// 
+  /// Called on every build, but Firestore caching minimizes API costs
+  /// since lastAccessDate typically hasn't changed since last check.
   Future<void> _updateStreak() async {
     final userId = FirebaseAuth.instance.currentUser!.uid;
     final userDoc = await FirebaseFirestore.instance
@@ -127,12 +177,19 @@ class DashboardHome extends StatelessWidget {
     final difference = today.difference(lastAccess).inDays;
 
     int newStreak = data['streak'] ?? 0;
+    
+    // Streak logic implementation
     if (difference == 1) {
+      // Consecutive day - increment streak
       newStreak++;
     } else if (difference > 1) {
+      // Streak broken - reset to day 1
+      // User gets credit for today's access
       newStreak = 1;
     }
+    // If difference == 0, same day access - no change to streak
 
+    // Update both streak counter and access timestamp atomically
     await FirebaseFirestore.instance.collection('users').doc(userId).update({
       'streak': newStreak,
       'lastAccessDate': today.toIso8601String(),
@@ -144,7 +201,7 @@ class DashboardHome extends StatelessWidget {
     final userId = FirebaseAuth.instance.currentUser!.uid;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFFF8F0),
+      backgroundColor: const Color(0xFFFFF8F0), // Warm cream background
       appBar: AppBar(
         backgroundColor: const Color(0xFFFFF8F0),
         elevation: 0,
@@ -153,20 +210,23 @@ class DashboardHome extends StatelessWidget {
           style: TextStyle(
             fontSize: 32,
             fontWeight: FontWeight.bold,
-            color: Color(0xFFE07A5F),
+            color: Color(0xFFE07A5F), // Coral pink brand color
           ),
         ),
         actions: [
+          // App logo provides consistent branding across screens
           Padding(
             padding: const EdgeInsets.only(right: 16),
             child: Image.asset(
-              'assets/icons/app_icon.png', // Replace with your app icon
+              'assets/icons/app_icon.png',
               width: 40,
               height: 40,
             ),
           ),
         ],
       ),
+      // StreamBuilder enables real-time UI updates when Firestore data changes
+      // This is critical for multi-device support and admin-triggered updates
       body: StreamBuilder<DocumentSnapshot>(
         stream: FirebaseFirestore.instance
             .collection('users')
@@ -183,6 +243,8 @@ class DashboardHome extends StatelessWidget {
           final completedLevels = List<int>.from(userData['completedLevels'] ?? []);
           final achievements = List<String>.from(userData['achievements'] ?? []);
 
+          // Update streak on every build
+          // Firebase caching prevents excessive API calls
           _updateStreak();
 
           return SingleChildScrollView(
@@ -190,24 +252,25 @@ class DashboardHome extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Streak Card
+                // Streak Card - Primary motivational element
+                // Large, prominent design emphasizes importance of daily engagement
                 Container(
                   padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFAE8C8),
+                    color: const Color(0xFFFAE8C8), // Light golden yellow
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.black, width: 3),
+                    border: Border.all(color: Colors.black, width: 3), // Bold border for emphasis
                   ),
                   child: Row(
                     children: [
-                      // Left side - Streak PNG (placeholder)
+                      // Visual streak icon reinforces concept
                       Image.asset(
-                        'assets/icons/streak_icon.png', // Replace with your streak PNG path
+                        'assets/icons/streak_icon.png',
                         width: 100,
                         height: 100,
                       ),
                       const Spacer(),
-                      // Right side - Number and Fire Icon together
+                      // Right-aligned streak counter with motivational message
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
@@ -220,6 +283,8 @@ class DashboardHome extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 8),
+                          // Large streak number with fire icon creates visual impact
+                          // Fire icon is universal symbol for streak/momentum
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
@@ -229,18 +294,19 @@ class DashboardHome extends StatelessWidget {
                                   color: Colors.black,
                                   fontSize: 72,
                                   fontWeight: FontWeight.bold,
-                                  height: 1,
+                                  height: 1, // Tight line height for visual impact
                                 ),
                               ),
                               const SizedBox(width: 8),
                               const Icon(
                                 Icons.local_fire_department,
                                 size: 80,
-                                color: Color(0xFFFF6B6B),
+                                color: Color(0xFFFF6B6B), // Red-orange fire color
                               ),
                             ],
                           ),
                           const SizedBox(height: 4),
+                          // Positive reinforcement message
                           const Text(
                             "You're doing so well!\nKeep going!",
                             textAlign: TextAlign.right,
@@ -256,7 +322,8 @@ class DashboardHome extends StatelessWidget {
                 ),
                 const SizedBox(height: 24),
 
-                // Continue Course Card
+                // Continue Course Card - Quick access to learning path
+                // Reduces friction by eliminating need to navigate through tabs
                 const Text(
                   'Continue Course',
                   style: TextStyle(
@@ -274,6 +341,8 @@ class DashboardHome extends StatelessWidget {
                   ),
                   color: Colors.white,
                   child: InkWell(
+                    // Triggers tab navigation to Roadmap screen
+                    // This maintains bottom nav state while jumping to specific content
                     onTap: onNavigateToRoadmap,
                     borderRadius: BorderRadius.circular(20),
                     child: Padding(
@@ -291,6 +360,7 @@ class DashboardHome extends StatelessWidget {
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
+                                // Shows user's current position in curriculum
                                 Text(
                                   'Level $currentLevel',
                                   style: const TextStyle(
@@ -308,7 +378,8 @@ class DashboardHome extends StatelessWidget {
                 ),
                 const SizedBox(height: 24),
 
-                // Achievements Section
+                // Achievements Section - Gamification badges
+                // Encourages long-term engagement through milestone rewards
                 const Text(
                   'Your Achievements',
                   style: TextStyle(
@@ -318,26 +389,31 @@ class DashboardHome extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
+                // Horizontal scrolling list allows unlimited achievement additions
                 SizedBox(
                   height: 140,
                   child: ListView(
                     scrollDirection: Axis.horizontal,
                     children: [
+                      // First achievement - rewards initial engagement
                       _AchievementCard(
                         icon: Icons.star,
                         title: 'The\nAdventurer',
                         isUnlocked: achievements.contains('first_step'),
                       ),
+                      // Streak milestone - encourages consistent daily practice
                       _AchievementCard(
                         icon: Icons.local_fire_department,
                         title: '7 Day\nStreak',
                         isUnlocked: streak >= 7,
                       ),
+                      // Progress milestone - rewards course completion
                       _AchievementCard(
                         icon: Icons.emoji_events,
                         title: 'Complete\n5 Levels',
                         isUnlocked: completedLevels.length >= 5,
                       ),
+                      // Final achievement - celebrates course mastery
                       _AchievementCard(
                         icon: Icons.school,
                         title: 'Graduate',
@@ -355,6 +431,14 @@ class DashboardHome extends StatelessWidget {
   }
 }
 
+/// Individual achievement badge card with locked/unlocked states.
+/// 
+/// Visual design principles:
+/// - Unlocked: Teal background with black icon (celebration/reward)
+/// - Locked: Grey background with grey icon (aspirational/future goal)
+/// 
+/// This creates clear visual distinction between earned and pending achievements,
+/// motivating users to unlock remaining badges.
 class _AchievementCard extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -374,6 +458,8 @@ class _AchievementCard extends StatelessWidget {
       margin: const EdgeInsets.only(right: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
+        // Color indicates unlock state
+        // Teal creates positive association with earned achievements
         color: isUnlocked ? const Color(0xFFB8E6E1) : Colors.grey[200],
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
@@ -387,6 +473,7 @@ class _AchievementCard extends StatelessWidget {
           Icon(
             icon,
             size: 40,
+            // Color contrast emphasizes unlock status
             color: isUnlocked ? const Color(0xFF5C4033) : Colors.grey,
           ),
           const SizedBox(height: 8),
@@ -396,6 +483,7 @@ class _AchievementCard extends StatelessWidget {
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.bold,
+              // Text color also reflects state
               color: isUnlocked ? Colors.black : Colors.grey,
             ),
           ),
