@@ -1,8 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+/// Screen for creating new language learning levels or editing existing ones.
+/// 
+/// This screen manages both quizzes and pronunciation exercises for each level.
+/// It uses Firebase Firestore for persistence and supports full CRUD operations.
+/// 
+/// The screen validates that at least one quiz exists before allowing save,
+/// ensuring data integrity for the learning experience.
 class AddEditLevelScreen extends StatefulWidget {
+  /// Firestore document ID when editing an existing level, null when creating new
   final String? levelId;
+  
+  /// Existing level data passed from the previous screen for editing
   final Map<String, dynamic>? levelData;
 
   const AddEditLevelScreen({
@@ -16,24 +26,36 @@ class AddEditLevelScreen extends StatefulWidget {
 }
 
 class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
+  // Form validation key ensures all fields are validated before submission
   final _formKey = GlobalKey<FormState>();
+  
+  // Controllers manage text input state and allow programmatic text updates
   final _levelIdController = TextEditingController();
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
 
+  // In-memory storage of quizzes and pronunciations before Firestore save
+  // Using List<Map> for flexible JSON-like structure compatible with Firestore
   List<Map<String, dynamic>> _quizzes = [];
   List<Map<String, dynamic>> _pronunciations = [];
 
+  // Prevents multiple simultaneous save operations and shows loading indicator
   bool _isLoading = false;
+  
+  // Computed property determines if we're editing (levelId exists) or creating new
   bool get _isEditing => widget.levelId != null;
 
   @override
   void initState() {
     super.initState();
+    // Pre-populate form fields when editing an existing level
+    // This provides a seamless editing experience with existing data visible
     if (_isEditing && widget.levelData != null) {
       _levelIdController.text = widget.levelData!['levelId'].toString();
       _titleController.text = widget.levelData!['title'] ?? '';
       _descriptionController.text = widget.levelData!['description'] ?? '';
+      
+      // Create mutable copies to allow in-memory modifications before save
       _quizzes = List<Map<String, dynamic>>.from(
         widget.levelData!['quizzes'] ?? [],
       );
@@ -45,15 +67,23 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
 
   @override
   void dispose() {
+    // Clean up controllers to prevent memory leaks
+    // Flutter requires manual disposal of TextEditingControllers
     _levelIdController.dispose();
     _titleController.dispose();
     _descriptionController.dispose();
     super.dispose();
   }
 
+  /// Validates form data and saves level to Firestore.
+  /// 
+  /// Business rule: At least one quiz must exist to maintain learning quality.
+  /// Updates existing document if editing, creates new document if adding.
+  /// Uses server timestamp to ensure consistent time across clients.
   Future<void> _saveLevel() async {
     if (!_formKey.currentState!.validate()) return;
 
+    // Enforce business rule: levels must have content to be useful
     if (_quizzes.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -67,25 +97,30 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
     setState(() => _isLoading = true);
 
     try {
+      // Prepare data structure matching Firestore schema
       final levelData = {
         'levelId': int.parse(_levelIdController.text),
         'title': _titleController.text.trim(),
         'description': _descriptionController.text.trim(),
         'quizzes': _quizzes,
         'pronunciations': _pronunciations,
+        // Server timestamp ensures consistent ordering across devices
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
       if (_isEditing) {
+        // Update existing document preserving createdAt timestamp
         await FirebaseFirestore.instance
             .collection('levels')
             .doc(widget.levelId)
             .update(levelData);
       } else {
+        // Create new document with both created and updated timestamps
         levelData['createdAt'] = FieldValue.serverTimestamp();
         await FirebaseFirestore.instance.collection('levels').add(levelData);
       }
 
+      // Check mounted before UI operations to prevent setState on disposed widget
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -100,6 +135,7 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
         Navigator.pop(context);
       }
     } catch (e) {
+      // Display error to user for debugging and awareness
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -109,12 +145,15 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
         );
       }
     } finally {
+      // Always reset loading state, even if save fails
       if (mounted) {
         setState(() => _isLoading = false);
       }
     }
   }
 
+  /// Opens dialog for adding a new quiz to the level.
+  /// Dialog pattern keeps quiz creation logic isolated and reusable.
   void _addQuiz() {
     showDialog(
       context: context,
@@ -128,6 +167,8 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
     );
   }
 
+  /// Opens dialog pre-populated with existing quiz data for editing.
+  /// Uses index to update the correct quiz in the list after save.
   void _editQuiz(int index) {
     showDialog(
       context: context,
@@ -142,12 +183,14 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
     );
   }
 
+  /// Removes quiz from in-memory list. Changes persist only after save.
   void _deleteQuiz(int index) {
     setState(() {
       _quizzes.removeAt(index);
     });
   }
 
+  /// Opens dialog for adding a new pronunciation word to the level.
   void _addPronunciation() {
     showDialog(
       context: context,
@@ -161,6 +204,7 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
     );
   }
 
+  /// Opens dialog pre-populated with existing pronunciation data for editing.
   void _editPronunciation(int index) {
     showDialog(
       context: context,
@@ -175,6 +219,7 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
     );
   }
 
+  /// Removes pronunciation word from in-memory list.
   void _deletePronunciation(int index) {
     setState(() {
       _pronunciations.removeAt(index);
@@ -188,6 +233,7 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
         title: Text(_isEditing ? 'Edit Level' : 'Add New Level',style: TextStyle(color: Colors.black,fontWeight: FontWeight.bold),),
         backgroundColor: const Color(0xFFF5F5F5),
         actions: [
+          // Hide save button during loading to prevent duplicate submissions
           if (!_isLoading)
             IconButton(
               icon: const Icon(Icons.save, color:Colors.black),
@@ -204,6 +250,7 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
           padding: const EdgeInsets.all(16),
           children: [
             // Basic Information Section
+            // Groups related fields for better visual organization
             Card(
               color:const Color(0xFFF5F5F5),
               child: Padding(
@@ -232,6 +279,7 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
                         if (value?.isEmpty ?? true) {
                           return 'Level ID is required';
                         }
+                        // Ensure level ID is a valid integer for proper sorting
                         if (int.tryParse(value!) == null) {
                           return 'Must be a valid number';
                         }
@@ -279,6 +327,7 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
             const SizedBox(height: 24),
 
             // Quizzes Section
+            // Uses card-based layout for visual hierarchy and easy management
             Card(
               color:const Color(0xFFF5F5F5),
               child: Padding(
@@ -307,6 +356,7 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
                       ],
                     ),
                     const SizedBox(height: 8),
+                    // Counter provides quick feedback on content quantity
                     Text(
                       '${_quizzes.length} quiz(es) added',
                       style: TextStyle(
@@ -314,6 +364,7 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
                         fontSize: 14,
                       ),
                     ),
+                    // Empty state guides user to add their first quiz
                     if (_quizzes.isEmpty) ...[
                       const SizedBox(height: 16),
                       Center(
@@ -334,6 +385,8 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
                       ),
                     ] else ...[
                       const SizedBox(height: 16),
+                      // Display all quizzes with edit/delete actions
+                      // Uses asMap() to get both index and value for operations
                       ..._quizzes.asMap().entries.map((entry) {
                         final index = entry.key;
                         final quiz = entry.value;
@@ -341,6 +394,7 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
                           margin: const EdgeInsets.only(bottom: 8),
                           color: Colors.blue[50],
                           child: ListTile(
+                            // Numbered badges help users track quiz order
                             leading: CircleAvatar(
                               backgroundColor: Colors.blue,
                               child: Text(
@@ -382,6 +436,7 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
             const SizedBox(height: 24),
 
             // Pronunciation Section
+            // Similar structure to quizzes but for pronunciation practice
             Card(
               color:const Color(0xFFF5F5F5),
               child: Padding(
@@ -451,6 +506,7 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
                                 style: const TextStyle(color: Colors.white),
                               ),
                             ),
+                            // Display word with pinyin for quick reference
                             title: Row(
                               children: [
                                 Text(
@@ -498,7 +554,8 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
 
             const SizedBox(height: 32),
 
-            // Save Button
+            // Primary Save Button
+            // Duplicates AppBar save for easier access without scrolling
             ElevatedButton.icon(
               onPressed: _saveLevel,
               icon: const Icon(Icons.save, color:Colors.white),
@@ -518,9 +575,15 @@ class _AddEditLevelScreenState extends State<AddEditLevelScreen> {
   }
 }
 
-// Quiz Dialog
+/// Dialog for creating or editing quiz questions.
+/// 
+/// Manages a single quiz with audio text, question, four options, and correct answer.
+/// Uses callback pattern to return data to parent without tight coupling.
 class _QuizDialog extends StatefulWidget {
+  /// Existing quiz data for editing, null when creating new quiz
   final Map<String, dynamic>? quiz;
+  
+  /// Callback invoked when user saves the quiz with validated data
   final Function(Map<String, dynamic>) onSave;
 
   const _QuizDialog({
@@ -535,6 +598,8 @@ class _QuizDialog extends StatefulWidget {
 
 class _QuizDialogState extends State<_QuizDialog> {
   final _formKey = GlobalKey<FormState>();
+  
+  // Separate controllers for each quiz field allow independent validation
   final _audioController = TextEditingController();
   final _questionController = TextEditingController();
   final _option1Controller = TextEditingController();
@@ -546,9 +611,12 @@ class _QuizDialogState extends State<_QuizDialog> {
   @override
   void initState() {
     super.initState();
+    // Pre-populate fields when editing existing quiz
     if (widget.quiz != null) {
       _audioController.text = widget.quiz!['audio'] ?? '';
       _questionController.text = widget.quiz!['question'] ?? '';
+      
+      // Safely extract options array and populate individual controllers
       final options = List<String>.from(widget.quiz!['options'] ?? []);
       if (options.length >= 4) {
         _option1Controller.text = options[0];
@@ -562,6 +630,7 @@ class _QuizDialogState extends State<_QuizDialog> {
 
   @override
   void dispose() {
+    // Dispose all seven controllers to prevent memory leaks
     _audioController.dispose();
     _questionController.dispose();
     _option1Controller.dispose();
@@ -572,12 +641,16 @@ class _QuizDialogState extends State<_QuizDialog> {
     super.dispose();
   }
 
+  /// Validates and packages quiz data for parent callback.
+  /// Trims whitespace to prevent storage of unnecessary spaces.
   void _save() {
     if (!_formKey.currentState!.validate()) return;
 
+    // Package data in structure matching Firestore schema
     final quiz = {
       'audio': _audioController.text.trim(),
       'question': _questionController.text.trim(),
+      // Options stored as array for easy iteration in quiz UI
       'options': [
         _option1Controller.text.trim(),
         _option2Controller.text.trim(),
@@ -602,6 +675,7 @@ class _QuizDialogState extends State<_QuizDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Audio field stores Chinese text for text-to-speech
               TextFormField(
                 controller: _audioController,
                 decoration: const InputDecoration(
@@ -622,6 +696,7 @@ class _QuizDialogState extends State<_QuizDialog> {
                 validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
               ),
               const SizedBox(height: 12),
+              // Four separate option fields ensure consistent quiz structure
               TextFormField(
                 controller: _option1Controller,
                 decoration: const InputDecoration(
@@ -658,6 +733,7 @@ class _QuizDialogState extends State<_QuizDialog> {
                 validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
               ),
               const SizedBox(height: 12),
+              // Correct answer must match one option exactly for validation
               TextFormField(
                 controller: _correctController,
                 decoration: const InputDecoration(
@@ -686,9 +762,15 @@ class _QuizDialogState extends State<_QuizDialog> {
   }
 }
 
-// Pronunciation Dialog
+/// Dialog for creating or editing pronunciation practice words.
+/// 
+/// Captures Chinese characters, pinyin romanization, English translation,
+/// and pronunciation tips to help learners master tones and sounds.
 class _PronunciationDialog extends StatefulWidget {
+  /// Existing pronunciation data for editing, null when creating new word
   final Map<String, dynamic>? pronunciation;
+  
+  /// Callback invoked when user saves with validated pronunciation data
   final Function(Map<String, dynamic>) onSave;
 
   const _PronunciationDialog({
@@ -703,6 +785,8 @@ class _PronunciationDialog extends StatefulWidget {
 
 class _PronunciationDialogState extends State<_PronunciationDialog> {
   final _formKey = GlobalKey<FormState>();
+  
+  // Four controllers for the complete pronunciation practice entry
   final _wordController = TextEditingController();
   final _pinyinController = TextEditingController();
   final _translationController = TextEditingController();
@@ -711,6 +795,7 @@ class _PronunciationDialogState extends State<_PronunciationDialog> {
   @override
   void initState() {
     super.initState();
+    // Pre-populate when editing existing pronunciation word
     if (widget.pronunciation != null) {
       _wordController.text = widget.pronunciation!['word'] ?? '';
       _pinyinController.text = widget.pronunciation!['pinyin'] ?? '';
@@ -721,6 +806,7 @@ class _PronunciationDialogState extends State<_PronunciationDialog> {
 
   @override
   void dispose() {
+    // Clean up all four controllers
     _wordController.dispose();
     _pinyinController.dispose();
     _translationController.dispose();
@@ -728,9 +814,11 @@ class _PronunciationDialogState extends State<_PronunciationDialog> {
     super.dispose();
   }
 
+  /// Validates and packages pronunciation data for parent callback.
   void _save() {
     if (!_formKey.currentState!.validate()) return;
 
+    // Structure matches Firestore pronunciation schema
     final pronunciation = {
       'word': _wordController.text.trim(),
       'pinyin': _pinyinController.text.trim(),
@@ -757,6 +845,7 @@ class _PronunciationDialogState extends State<_PronunciationDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Larger font for Chinese characters improves readability
               TextFormField(
                 controller: _wordController,
                 decoration: const InputDecoration(
@@ -768,6 +857,7 @@ class _PronunciationDialogState extends State<_PronunciationDialog> {
                 validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
               ),
               const SizedBox(height: 12),
+              // Pinyin provides phonetic guide for pronunciation
               TextFormField(
                 controller: _pinyinController,
                 decoration: const InputDecoration(
@@ -788,6 +878,7 @@ class _PronunciationDialogState extends State<_PronunciationDialog> {
                 validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
               ),
               const SizedBox(height: 12),
+              // Tips field provides context on tone and pronunciation nuances
               TextFormField(
                 controller: _tipsController,
                 decoration: const InputDecoration(
