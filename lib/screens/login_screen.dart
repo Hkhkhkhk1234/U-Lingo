@@ -1,592 +1,547 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'language_selection_screen.dart';
 
-/// User profile and account management screen.
-/// 
-/// Displays user statistics (achievements, lessons, streak) and provides
-/// access to account settings. Integrates with Firebase Auth for authentication
-/// and Firestore for real-time user data synchronization.
-/// 
-/// Critical features:
-/// - Real-time statistics updates via Firestore streams
-/// - Destructive actions (sign out, reset progress) require confirmation
-/// - Context-mounted checks prevent setState calls after widget disposal
-class ProfileScreen extends StatelessWidget {
-  const ProfileScreen({Key? key}) : super(key: key);
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({Key? key}) : super(key: key);
 
-  /// Handles user sign-out with confirmation dialog.
-  /// 
-  /// Implements two-step confirmation to prevent accidental sign-outs,
-  /// which would force users to re-authenticate. Context-mounted checks
-  /// ensure UI feedback occurs only if the widget is still active.
-  Future<void> _signOut(BuildContext context) async {
-    // Show confirmation dialog to prevent accidental sign-outs
-    final shouldSignOut = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Sign Out'),
-        content: const Text('Are you sure you want to sign out?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          // Red background emphasizes destructive action
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
-            child: const Text('Sign Out'),
-          ),
-        ],
-      ),
-    );
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
 
-    if (shouldSignOut == true) {
-      try {
-        await FirebaseAuth.instance.signOut();
-        
-        // Context-mounted check prevents showing SnackBar after navigation
-        // This avoids "setState called after dispose" errors
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Signed out successfully'),
-              backgroundColor: Colors.green,
-              duration: Duration(seconds: 2),
-            ),
-          );
+class _LoginScreenState extends State<LoginScreen> {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _nameController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  bool _isLogin = true;
+  bool _isLoading = false;
+
+  Future<void> _authenticate() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      if (_isLogin) {
+        // LOGIN - Check if user is trying to access with admin account
+        print('=== STUDENT LOGIN ===');
+        print('Email: ${_emailController.text.trim()}');
+
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+        );
+
+        final user = FirebaseAuth.instance.currentUser;
+        print('Login successful!');
+        print('User ID: ${user?.uid}');
+
+        // 🔥 CRITICAL CHECK: Verify this is NOT an admin account
+        final adminDoc = await FirebaseFirestore.instance
+            .collection('admins')
+            .doc(user!.uid)
+            .get();
+
+        if (adminDoc.exists) {
+          // This is an admin account - reject login
+          await FirebaseAuth.instance.signOut();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('This is an admin account. Please use the Admin login.'),
+                backgroundColor: Colors.red,
+                duration: Duration(seconds: 5),
+              ),
+            );
+          }
+          setState(() => _isLoading = false);
+          return;
         }
-      } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error signing out: ${e.toString()}'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 3),
-            ),
-          );
+
+        // Verify student document exists
+        final studentDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+
+        if (!studentDoc.exists) {
+          await FirebaseAuth.instance.signOut();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Student account not found. Please sign up first.'),
+                backgroundColor: Colors.red,
+                duration: Duration(seconds: 5),
+              ),
+            );
+          }
+          setState(() => _isLoading = false);
+          return;
         }
-      }
-    }
-  }
 
-  /// Resets all user progress with confirmation dialog.
-  /// 
-  /// This is a destructive, irreversible action that clears:
-  /// - Streak count (daily learning consistency)
-  /// - Current level progress
-  /// - Completed levels history
-  /// - Earned achievements
-  /// 
-  /// Updates lastAccessDate to maintain activity tracking integrity
-  /// after reset. Strong confirmation dialog prevents accidental data loss.
-  Future<void> _resetProgress(BuildContext context) async {
-    // Explicit warning about irreversibility prevents accidental resets
-    final shouldReset = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Reset Progress'),
-        content: const Text(
-          'This will reset all your progress including streak, levels, and achievements. This action cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          // Red button emphasizes destructive nature
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
-            child: const Text('Reset'),
-          ),
-        ],
-      ),
-    );
+        print('✅ Valid student login');
+        print('Email verified: ${user.emailVerified}');
 
-    if (shouldReset == true) {
-      try {
-        final userId = FirebaseAuth.instance.currentUser!.uid;
-        
-        // Update specific fields rather than deleting document
-        // This preserves user metadata like email, name, language preference
-        await FirebaseFirestore.instance.collection('users').doc(userId).update({
+      } else {
+        // SIGNUP - Validate UNIMAS email domain
+        print('=== STUDENT SIGNUP ===');
+        print('Email: ${_emailController.text.trim()}');
+        print('Name: ${_nameController.text.trim()}');
+
+        if (!_emailController.text.trim().endsWith('@siswa.unimas.my')) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Please use a UNIMAS email address (@siswa.unimas.my)'),
+                backgroundColor: Colors.red,
+                duration: Duration(seconds: 4),
+              ),
+            );
+          }
+          setState(() => _isLoading = false);
+          return;
+        }
+
+        final userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+        );
+
+        print('Account created!');
+        print('User ID: ${userCredential.user?.uid}');
+
+        // Update display name in Firebase Auth
+        await userCredential.user?.updateDisplayName(_nameController.text.trim());
+        print('Display name set in Auth: ${_nameController.text.trim()}');
+
+        // Create user document with current timestamp
+        final now = DateTime.now();
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userCredential.user!.uid)
+            .set({
+          'name': _nameController.text.trim(),
+          'email': _emailController.text.trim(),
+          'createdAt': Timestamp.fromDate(now),
           'streak': 0,
-          'currentLevel': 1, // Reset to beginning
-          'completedLevels': [], // Clear all progress
-          'achievements': [], // Remove all earned achievements
-          'lastAccessDate': DateTime.now().toIso8601String(), // Maintain activity tracking
+          'lastAccessDate': now.toIso8601String(),
+          'currentLevel': 1,
+          'completedLevels': [],
+          'achievements': [],
+          'role': 'student', // Add role identifier
         });
 
-        if (context.mounted) {
+        print('✅ User document created successfully');
+        print('   - Name: ${_nameController.text.trim()}');
+        print('   - Email: ${_emailController.text.trim()}');
+        print('   - CreatedAt: $now');
+
+        // Send verification email
+        await userCredential.user?.sendEmailVerification();
+        print('Verification email sent');
+
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Progress reset successfully'),
+              content: Text('Account created! Please verify your email to continue.'),
               backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error resetting progress: ${e.toString()}'),
-              backgroundColor: Colors.red,
+              duration: Duration(seconds: 4),
             ),
           );
         }
       }
+    } on FirebaseAuthException catch (e) {
+      print('Firebase Auth Error: ${e.code}');
+      print('Error message: ${e.message}');
+
+      String message = 'Authentication failed';
+
+      switch (e.code) {
+        case 'weak-password':
+          message = 'The password is too weak. Please use at least 6 characters.';
+          break;
+        case 'email-already-in-use':
+          message = 'An account already exists with this email.';
+          break;
+        case 'user-not-found':
+          message = 'No user found with this email.';
+          break;
+        case 'wrong-password':
+          message = 'Incorrect password.';
+          break;
+        case 'invalid-email':
+          message = 'Invalid email address.';
+          break;
+        case 'invalid-credential':
+          message = 'Invalid email or password. Please check your credentials.';
+          break;
+        default:
+          message = e.message ?? 'Authentication failed';
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      print('General Error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  /// Navigates to language selection screen.
-  /// 
-  /// Allows users to change their learning language preference.
-  /// Uses standard navigation to allow back navigation if user changes mind.
-  Future<void> _changeLanguage(BuildContext context) async {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const LanguageSelectionScreen(),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    // User is guaranteed to exist here - ProfileScreen only accessible
-    // after successful authentication via login flow
-    final user = FirebaseAuth.instance.currentUser!;
-    final userId = user.uid;
-
     return Scaffold(
-      // Light cream background maintains brand consistency with welcome screen
-      backgroundColor: const Color(0xFFFFF8E8),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFFFFF8E8),
-        elevation: 0, // Flat design for modern appearance
-        title: const Text(
-          'Account',
-          style: TextStyle(
-            color: Color(0xFFE88B8B), // Coral pink for brand identity
-            fontSize: 32,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        centerTitle: true,
-        // Disable back button - accessed via bottom navigation, not navigation stack
-        automaticallyImplyLeading: false,
-        actions: [
-          // Apple icon serves as decorative brand element
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: Image.asset(
-              'assets/images/apple.png',
-              width: 50,
-              height: 50,
-            ),
-          ),
-        ],
-      ),
-      // StreamBuilder enables real-time updates when user data changes
-      // (e.g., completing lessons in another session, earning achievements)
-      body: StreamBuilder<DocumentSnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          // Extract user statistics from Firestore document
-          final userData = snapshot.data!.data() as Map<String, dynamic>;
-          final completedLevels = List<int>.from(userData['completedLevels'] ?? []);
-          final streak = userData['streak'] ?? 0;
-          final achievements = List.from(userData['achievements'] ?? []);
-
-          return SingleChildScrollView(
-            child: Column(
-              children: [
-                // Profile Card - displays user identity information
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      // Subtle shadow provides depth without overwhelming design
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 10,
-                          offset: const Offset(0, 5),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        // Display name defaults to 'User' if not set during signup
-                        Text(
-                          user.displayName ?? 'User',
-                          style: const TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        // Email provides unique identifier for user
-                        Text(
-                          user.email ?? '',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                // Statistics Section - gamification metrics to encourage engagement
-                // Three-column layout shows key progress indicators at a glance
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      Expanded(
-                        child: _StatCard(
-                          iconPath: 'assets/images/trophy_icon.png',
-                          title: 'Achievements achieved',
-                          value: '${achievements.length}',
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _StatCard(
-                          iconPath: 'assets/images/Lesson_icon.png',
-                          title: 'Lessons completed',
-                          value: '${completedLevels.length}',
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _StatCard(
-                          iconPath: 'assets/images/day_streak_icon.png',
-                          title: 'Days Streak',
-                          value: '$streak',
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 32),
-
-                // Account Settings Section
-                // Left-aligned header follows standard settings UI patterns
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 0, 16, 8),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Account Settings',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-
-                // Edit Profile - placeholder for future feature
-                _SettingsTile(
-                  title: 'Edit Profile',
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Edit Profile coming soon!'),
-                      ),
-                    );
-                  },
-                ),
-
-                // Change language - functional navigation to language selection
-                _SettingsTile(
-                  title: 'Change language',
-                  onTap: () => _changeLanguage(context),
-                ),
-
-                // Notification settings - placeholder for future push notification configuration
-                _SettingsTile(
-                  title: 'Notification',
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Notification settings coming soon!'),
-                      ),
-                    );
-                  },
-                ),
-
-                // Password change - placeholder for future password reset flow
-                _SettingsTile(
-                  title: 'Change password',
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Change password coming soon!'),
-                      ),
-                    );
-                  },
-                ),
-
-                const SizedBox(height: 24),
-
-                // About Section - informational and legal links
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 0, 16, 8),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'About',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-
-                _SettingsTile(
-                  title: 'FAQ',
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('FAQ coming soon!'),
-                      ),
-                    );
-                  },
-                ),
-
-                _SettingsTile(
-                  title: 'Privacy Policy',
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Privacy Policy coming soon!'),
-                      ),
-                    );
-                  },
-                ),
-
-                // Terms tile reused to show app information
-                // This is a workaround - ideally "About" and "Terms" would be separate
-                _SettingsTile(
-                  title: 'Terms and Agreements',
-                  onTap: () {
-                    showDialog(
-                      context: context,
-                      builder: (context) => AlertDialog(
-                        title: const Text('About U-Lingo'),
-                        content: const Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('U-Lingo v1.0.0'),
-                            SizedBox(height: 8),
-                            Text('UNIMAS Language Learning Platform'),
-                            SizedBox(height: 16),
-                            Text(
-                              'Learn languages with ease through interactive lessons, quizzes, and AI-powered assistance.',
-                              style: TextStyle(fontSize: 14),
-                            ),
-                          ],
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text('Close'),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-
-                _SettingsTile(
-                  title: 'Help',
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Help & Support coming soon!'),
-                      ),
-                    );
-                  },
-                ),
-
-                const SizedBox(height: 16),
-
-                // Destructive action buttons placed at bottom
-                // Both use outlined style to reduce visual weight compared to filled buttons
-                // Placement at bottom follows mobile UI conventions for dangerous actions
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Column(
-                    children: [
-                      // Reset Progress - destructive but reversible by re-learning
-                      InkWell(
-                        onTap: () => _resetProgress(context),
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.black, width: 2),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text(
-                            'Reset Progress',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      // Sign Out - removes authentication state
-                      InkWell(
-                        onTap: () => _signOut(context),
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.black, width: 2),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text(
-                            'Sign Out',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 32),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-/// Displays a single statistic card with icon, value, and label.
-/// 
-/// Used in a horizontal row to show key user metrics (achievements, lessons, streak).
-/// Icon-first layout draws attention to visual elements before numerical data.
-class _StatCard extends StatelessWidget {
-  final String iconPath;
-  final String title;
-  final String value;
-
-  const _StatCard({
-    Key? key,
-    required this.iconPath,
-    required this.title,
-    required this.value,
-  }) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        // Icon provides immediate visual recognition of metric type
-        Image.asset(
-          iconPath,
-          width: 60,
-          height: 60,
-        ),
-        const SizedBox(height: 8),
-        // Bold, large value emphasizes the statistic
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 4),
-        // Smaller label text provides context without overwhelming the number
-        Text(
-          title,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontSize: 11,
-            color: Colors.black87,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Generic settings list item with title and tap handler.
-/// 
-/// Provides consistent styling across all settings options.
-/// Minimal design focuses attention on text labels rather than decorative elements.
-/// InkWell provides touch ripple feedback for better user interaction.
-class _SettingsTile extends StatelessWidget {
-  final String title;
-  final VoidCallback onTap;
-
-  const _SettingsTile({
-    Key? key,
-    required this.title,
-    required this.onTap,
-  }) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      // Asymmetric margins align with section headers above
-      margin: const EdgeInsets.only(left: 24, right: 16, top: 4, bottom: 4),
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          // Vertical padding creates adequate touch targets (44pt minimum iOS guideline)
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              title,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
+      backgroundColor: const Color(0xFFFFF8F0), // Cream background
+      body: SafeArea(
+        child: Stack(
+          children: [
+            // Background decorations
+            Positioned(
+              top: -20,
+              left: -20,
+              child: Image.asset(
+                'assets/images/apple.png',
+                width: 80,
+                height: 80,
               ),
             ),
-          ),
+            Positioned(
+              top: 30,
+              left: 90,
+              child: Image.asset(
+                'assets/images/apple1.png',
+                width: 60,
+                height: 60,
+              ),
+            ),
+            Positioned(
+              top: 10,
+              right: 30,
+              child: Image.asset(
+                'assets/images/apple.png',
+                width: 100,
+                height: 100,
+              ),
+            ),
+            Positioned(
+              top: 100,
+              left: 30,
+              child: Image.asset(
+                'assets/images/apple2.png',
+                width: 40,
+                height: 40,
+              ),
+            ),
+            Positioned(
+              top: 35,
+              left: MediaQuery.of(context).size.width / 2 - 15,
+              child: Image.asset(
+                'assets/images/star.png',
+                width: 30,
+                height: 30,
+              ),
+            ),
+            Positioned(
+              top: 280,
+              left: 20,
+              child: Image.asset(
+                'assets/images/star.png',
+                width: 35,
+                height: 35,
+              ),
+            ),
+            Positioned(
+              bottom: 250,
+              left: -10,
+              child: Image.asset(
+                'assets/images/apple.png',
+                width: 70,
+                height: 70,
+              ),
+            ),
+            Positioned(
+              bottom: 200,
+              right: -15,
+              child: Image.asset(
+                'assets/images/apple.png',
+                width: 85,
+                height: 85,
+              ),
+            ),
+            Positioned(
+              bottom: 350,
+              right: 30,
+              child: Image.asset(
+                'assets/images/apple2.png',
+                width: 35,
+                height: 35,
+              ),
+            ),
+            Positioned(
+              bottom: 130,
+              left: 15,
+              child: Image.asset(
+                'assets/images/cat.png',
+                width: 90,
+                height: 90,
+              ),
+            ),
+            Positioned(
+              bottom: 100,
+              right: 50,
+              child: Image.asset(
+                'assets/images/apple.png',
+                width: 75,
+                height: 75,
+              ),
+            ),
+            Positioned(
+              bottom: 50,
+              left: MediaQuery.of(context).size.width / 2 - 20,
+              child: Image.asset(
+                'assets/images/star.png',
+                width: 40,
+                height: 40,
+              ),
+            ),
+
+            // Main content
+            Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(32),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Login/Sign Up Title
+                      Text(
+                        _isLogin ? 'Login' : 'Sign Up',
+                        style: const TextStyle(
+                          fontSize: 48,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFFE17B7B),
+                        ),
+                      ),
+                      const SizedBox(height: 40),
+
+                      // UNIMAS Email Notice (only for sign up)
+                      if (!_isLogin)
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          margin: const EdgeInsets.only(bottom: 20),
+                          decoration: BoxDecoration(
+                            color: Colors.blue[50],
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.blue[200]!),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  'Please use your UNIMAS email (@siswa.unimas.my)',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.blue[900],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                      // Name field (only for sign up)
+                      if (!_isLogin)
+                        Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF4D6),
+                            borderRadius: BorderRadius.circular(30),
+                            border: Border.all(color: Colors.black, width: 2.5),
+                          ),
+                          child: TextFormField(
+                            controller: _nameController,
+                            decoration: const InputDecoration(
+                              labelText: 'Full Name',
+                              labelStyle: TextStyle(
+                                color: Colors.black,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              border: InputBorder.none,
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 24,
+                                vertical: 16,
+                              ),
+                              hintText: 'Enter your full name',
+                            ),
+                            validator: (value) {
+                              if (value?.isEmpty ?? true) {
+                                return 'Enter your name';
+                              }
+                              if (value!.trim().length < 2) {
+                                return 'Name must be at least 2 characters';
+                              }
+                              return null;
+                            },
+                          ),
+                        ),
+                      if (!_isLogin) const SizedBox(height: 16),
+
+                      // Email field
+                      Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF4D6),
+                          borderRadius: BorderRadius.circular(30),
+                          border: Border.all(color: Colors.black, width: 2.5),
+                        ),
+                        child: TextFormField(
+                          controller: _emailController,
+                          keyboardType: TextInputType.emailAddress,
+                          decoration: InputDecoration(
+                            labelText: _isLogin ? 'Email' : 'UNIMAS Email',
+                            labelStyle: const TextStyle(
+                              color: Colors.black,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 16,
+                            ),
+                            hintText: _isLogin ? null : 'name@siswa.unimas.my',
+                          ),
+                          validator: (value) {
+                            if (value?.isEmpty ?? true) {
+                              return 'Enter your email';
+                            }
+                            if (!value!.contains('@')) {
+                              return 'Enter a valid email';
+                            }
+                            if (!_isLogin && !value.endsWith('@siswa.unimas.my')) {
+                              return 'Use UNIMAS email (@siswa.unimas.my)';
+                            }
+                            return null;
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Password field
+                      Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF4D6),
+                          borderRadius: BorderRadius.circular(30),
+                          border: Border.all(color: Colors.black, width: 2.5),
+                        ),
+                        child: TextFormField(
+                          controller: _passwordController,
+                          obscureText: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Password',
+                            labelStyle: TextStyle(
+                              color: Colors.black,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 16,
+                            ),
+                          ),
+                          validator: (value) =>
+                          (value?.length ?? 0) >= 6 ? null : 'Min 6 characters',
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+
+                      // Login/Sign Up button
+                      Container(
+                        width: double.infinity,
+                        height: 55,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(30),
+                          border: Border.all(color: Colors.black, width: 2.5),
+                        ),
+                        child: ElevatedButton(
+                          onPressed: _isLoading ? null : _authenticate,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFFFF4D6),
+                            foregroundColor: Colors.black,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(30),
+                            ),
+                          ),
+                          child: _isLoading
+                              ? const CircularProgressIndicator(
+                            color: Colors.black,
+                          )
+                              : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                _isLogin ? 'Login' : 'Sign Up',
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              const Text('🎓', style: TextStyle(fontSize: 20)),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Toggle between login and sign up
+                      TextButton(
+                        onPressed: () => setState(() => _isLogin = !_isLogin),
+                        child: Text(
+                          _isLogin
+                              ? 'Don\'t have an account? Sign Up'
+                              : 'Already have an account? Login',
+                          style: const TextStyle(
+                            color: Colors.black,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _nameController.dispose();
+    super.dispose();
   }
 }
